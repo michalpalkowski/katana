@@ -28,12 +28,6 @@ pub trait ContractClassWriter {
     fn set_class(&self, hash: ClassHash, class: ContractClass) -> ProviderResult<()>;
 }
 
-#[auto_impl::auto_impl(&, Box, Arc)]
-pub trait ContractClassWriterExt: ContractClassWriter {
-    /// Set the compiled class for the given class hash.
-    fn set_compiled_class(&self, hash: ClassHash, class: CompiledClass) -> ProviderResult<()>;
-}
-
 pub trait ContractClassProviderExt: ContractClassProvider {
     /// Returns the compiled class definition of a contract class given its class hash.
     fn compiled_class(&self, hash: ClassHash) -> ProviderResult<Option<CompiledClass>> {

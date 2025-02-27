@@ -10,7 +10,7 @@ use katana_primitives::block::{
     Block, BlockHash, BlockHashOrNumber, BlockNumber, BlockWithTxHashes, FinalityStatus, Header,
     SealedBlockWithStatus,
 };
-use katana_primitives::class::{ClassHash, CompiledClass, CompiledClassHash, ContractClass};
+use katana_primitives::class::{ClassHash, CompiledClassHash, ContractClass};
 use katana_primitives::contract::ContractAddress;
 use katana_primitives::env::BlockEnv;
 use katana_primitives::receipt::Receipt;
@@ -30,7 +30,7 @@ use crate::traits::block::{
     BlockHashProvider, BlockNumberProvider, BlockProvider, BlockStatusProvider, BlockWriter,
     HeaderProvider,
 };
-use crate::traits::contract::{ContractClassWriter, ContractClassWriterExt};
+use crate::traits::contract::ContractClassWriter;
 use crate::traits::env::BlockEnvProvider;
 use crate::traits::stage::StageCheckpointProvider;
 use crate::traits::state::{StateFactoryProvider, StateProvider, StateWriter};
@@ -546,13 +546,6 @@ impl ContractClassWriter for ForkedProvider {
         compiled_hash: CompiledClassHash,
     ) -> ProviderResult<()> {
         self.state.compiled_class_hashes.write().insert(hash, compiled_hash);
-        Ok(())
-    }
-}
-
-impl ContractClassWriterExt for ForkedProvider {
-    fn set_compiled_class(&self, hash: ClassHash, class: CompiledClass) -> ProviderResult<()> {
-        self.state.shared_contract_classes.compiled_classes.write().insert(hash, class);
         Ok(())
     }
 }

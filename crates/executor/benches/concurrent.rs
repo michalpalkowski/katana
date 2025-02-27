@@ -44,7 +44,7 @@ fn blockifier(
     (block_env, cfg_env): (BlockEnv, CfgEnv),
     tx: ExecutableTxWithHash,
 ) {
-    let factory = Arc::new(BlockifierFactory::new(cfg_env, flags.clone(), BlockLimits::max()));
+    let factory = Arc::new(BlockifierFactory::new(cfg_env, flags.clone(), BlockLimits::default()));
 
     group.bench_function("Blockifier.1", |b| {
         b.iter_batched(

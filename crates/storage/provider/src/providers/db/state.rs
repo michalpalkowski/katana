@@ -7,7 +7,7 @@ use katana_db::models::storage::{ContractStorageKey, StorageEntry};
 use katana_db::tables;
 use katana_db::trie::TrieDbFactory;
 use katana_primitives::block::BlockNumber;
-use katana_primitives::class::{ClassHash, CompiledClass, CompiledClassHash, ContractClass};
+use katana_primitives::class::{ClassHash, CompiledClassHash, ContractClass};
 use katana_primitives::contract::{
     ContractAddress, GenericContractInfo, Nonce, StorageKey, StorageValue,
 };
@@ -15,7 +15,7 @@ use katana_primitives::Felt;
 
 use super::DbProvider;
 use crate::error::ProviderError;
-use crate::traits::contract::{ContractClassProvider, ContractClassWriter, ContractClassWriterExt};
+use crate::traits::contract::{ContractClassProvider, ContractClassWriter};
 use crate::traits::state::{StateProofProvider, StateProvider, StateRootProvider, StateWriter};
 use crate::ProviderResult;
 
@@ -86,15 +86,6 @@ impl ContractClassWriter for DbProvider {
     ) -> ProviderResult<()> {
         self.0.update(move |db_tx| -> ProviderResult<()> {
             db_tx.put::<tables::CompiledClassHashes>(hash, compiled_hash)?;
-            Ok(())
-        })?
-    }
-}
-
-impl ContractClassWriterExt for DbProvider {
-    fn set_compiled_class(&self, hash: ClassHash, class: CompiledClass) -> ProviderResult<()> {
-        self.0.update(move |db_tx| -> ProviderResult<()> {
-            db_tx.put::<tables::CompiledClasses>(hash, class)?;
             Ok(())
         })?
     }

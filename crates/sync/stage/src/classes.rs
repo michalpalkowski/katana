@@ -7,7 +7,7 @@ use katana_feeder_gateway::client::{self, SequencerGateway};
 use katana_primitives::block::{BlockIdOrTag, BlockNumber};
 use katana_primitives::class::{ClassHash, ContractClass};
 use katana_provider::error::ProviderError;
-use katana_provider::traits::contract::{ContractClassWriter, ContractClassWriterExt};
+use katana_provider::traits::contract::ContractClassWriter;
 use katana_provider::traits::state_update::StateUpdateProvider;
 use katana_rpc_types::class::ConversionError;
 use tracing::{debug, error, warn};
@@ -50,7 +50,7 @@ impl<P> Classes<P> {
 #[async_trait::async_trait]
 impl<P> Stage for Classes<P>
 where
-    P: StateUpdateProvider + ContractClassWriter + ContractClassWriterExt,
+    P: StateUpdateProvider + ContractClassWriter,
 {
     fn id(&self) -> &'static str {
         "Classes"

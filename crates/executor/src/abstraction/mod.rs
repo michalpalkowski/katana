@@ -12,15 +12,15 @@ pub use crate::error::*;
 pub type ExecutorResult<T> = Result<T, crate::error::ExecutorError>;
 
 /// See <https://docs.starknet.io/chain-info/#current_limits>.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BlockLimits {
     /// The maximum number of Cairo steps that can be completed within each block.
     pub cairo_steps: u64,
 }
 
-impl BlockLimits {
-    pub fn max() -> Self {
-        Self { cairo_steps: u64::MAX }
+impl Default for BlockLimits {
+    fn default() -> Self {
+        Self { cairo_steps: 50_000_000 }
     }
 }
 

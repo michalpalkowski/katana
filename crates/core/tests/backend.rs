@@ -26,7 +26,7 @@ fn executor(chain_spec: &ChainSpec) -> BlockifierFactory {
             ..Default::default()
         },
         Default::default(),
-        BlockLimits::max(),
+        BlockLimits::default(),
     )
 }
 

@@ -272,6 +272,6 @@ pub mod blockifier {
 
     #[rstest::fixture]
     pub fn factory(cfg: CfgEnv, #[with(true)] flags: ExecutionFlags) -> BlockifierFactory {
-        BlockifierFactory::new(cfg, flags, BlockLimits::max())
+        BlockifierFactory::new(cfg, flags, BlockLimits::default())
     }
 }

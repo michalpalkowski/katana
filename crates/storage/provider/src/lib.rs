@@ -7,7 +7,7 @@ use katana_primitives::block::{
     Block, BlockHash, BlockHashOrNumber, BlockNumber, BlockWithTxHashes, FinalityStatus, Header,
     SealedBlockWithStatus,
 };
-use katana_primitives::class::{ClassHash, CompiledClass, CompiledClassHash, ContractClass};
+use katana_primitives::class::{ClassHash, CompiledClassHash, ContractClass};
 use katana_primitives::contract::{ContractAddress, StorageKey, StorageValue};
 use katana_primitives::env::BlockEnv;
 use katana_primitives::receipt::Receipt;
@@ -16,7 +16,7 @@ use katana_primitives::trace::TxExecInfo;
 use katana_primitives::transaction::{TxHash, TxNumber, TxWithHash};
 use katana_primitives::Felt;
 use traits::block::{BlockIdReader, BlockStatusProvider, BlockWriter};
-use traits::contract::{ContractClassWriter, ContractClassWriterExt};
+use traits::contract::ContractClassWriter;
 use traits::env::BlockEnvProvider;
 use traits::stage::StageCheckpointProvider;
 use traits::state::StateWriter;
@@ -299,15 +299,6 @@ where
         compiled_hash: CompiledClassHash,
     ) -> ProviderResult<()> {
         self.provider.set_compiled_class_hash_of_class_hash(hash, compiled_hash)
-    }
-}
-
-impl<Db> ContractClassWriterExt for BlockchainProvider<Db>
-where
-    Db: ContractClassWriterExt,
-{
-    fn set_compiled_class(&self, hash: ClassHash, class: CompiledClass) -> ProviderResult<()> {
-        self.provider.set_compiled_class(hash, class)
     }
 }
 

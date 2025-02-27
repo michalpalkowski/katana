@@ -399,7 +399,7 @@ mod tests {
                 ..Default::default()
             },
             Default::default(),
-            BlockLimits::max(),
+            BlockLimits::default(),
         )
     }
 

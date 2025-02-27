@@ -10,7 +10,7 @@ use katana_primitives::hash::{self, StarkHash};
 use katana_provider::providers::db::DbProvider;
 use katana_provider::providers::fork::ForkedProvider;
 use katana_provider::traits::block::{BlockProvider, BlockWriter};
-use katana_provider::traits::contract::{ContractClassWriter, ContractClassWriterExt};
+use katana_provider::traits::contract::ContractClassWriter;
 use katana_provider::traits::env::BlockEnvProvider;
 use katana_provider::traits::stage::StageCheckpointProvider;
 use katana_provider::traits::state::{StateFactoryProvider, StateWriter};
@@ -41,7 +41,6 @@ pub trait Database:
     + StateUpdateProvider
     + StateWriter
     + ContractClassWriter
-    + ContractClassWriterExt
     + StateFactoryProvider
     + BlockEnvProvider
     + TrieWriter
@@ -64,7 +63,6 @@ impl<T> Database for T where
         + StateUpdateProvider
         + StateWriter
         + ContractClassWriter
-        + ContractClassWriterExt
         + StateFactoryProvider
         + BlockEnvProvider
         + TrieWriter
