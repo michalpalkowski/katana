@@ -12,15 +12,15 @@ pub mod utils;
 use blockifier::context::BlockContext;
 use blockifier::state::cached_state::{self, MutRefState};
 use blockifier::state::state_api::StateReader;
-use katana_cairo::starknet_api::block::{
-    BlockInfo, BlockNumber, BlockTimestamp, GasPriceVector, GasPrices, NonzeroGasPrice,
-};
 use katana_primitives::block::{ExecutableBlock, GasPrices as KatanaGasPrices, PartialHeader};
 use katana_primitives::env::{BlockEnv, CfgEnv};
 use katana_primitives::fee::TxFeeInfo;
 use katana_primitives::transaction::{ExecutableTx, ExecutableTxWithHash, TxWithHash};
 use katana_primitives::Felt;
 use katana_provider::traits::state::StateProvider;
+use starknet_api::block::{
+    BlockInfo, BlockNumber, BlockTimestamp, GasPriceVector, GasPrices, NonzeroGasPrice,
+};
 use tracing::info;
 
 use self::state::CachedState;

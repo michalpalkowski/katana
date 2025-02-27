@@ -1,5 +1,5 @@
 use anyhow::Result;
-use katana_cairo::lang::starknet_classes::casm_contract_class::CasmContractClass;
+use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use serde_json::Value;
 
 use crate::class::{CompiledClass, ContractClass, LegacyContractClass, SierraContractClass};
@@ -20,7 +20,7 @@ pub fn parse_compiled_class(artifact: Value) -> Result<CompiledClass> {
 }
 
 pub fn parse_compiled_class_v1(class: Value) -> Result<CasmContractClass> {
-    use katana_cairo::lang::starknet_classes::contract_class::ContractClass;
+    use cairo_lang_starknet_classes::contract_class::ContractClass;
     let class: ContractClass = serde_json::from_value(class)?;
     Ok(CasmContractClass::from_contract_class(class, true, usize::MAX)?)
 }

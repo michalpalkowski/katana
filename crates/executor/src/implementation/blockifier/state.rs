@@ -6,8 +6,6 @@ use blockifier::execution::contract_class::RunnableCompiledClass;
 use blockifier::state::cached_state;
 use blockifier::state::errors::StateError;
 use blockifier::state::state_api::{StateReader, StateResult};
-use katana_cairo::starknet_api::core::{ClassHash, CompiledClassHash, Nonce};
-use katana_cairo::starknet_api::state::StorageKey;
 use katana_primitives::class::{self, ContractClass};
 use katana_primitives::Felt;
 use katana_provider::error::ProviderError;
@@ -15,6 +13,8 @@ use katana_provider::traits::contract::ContractClassProvider;
 use katana_provider::traits::state::{StateProofProvider, StateProvider, StateRootProvider};
 use katana_provider::ProviderResult;
 use parking_lot::Mutex;
+use starknet_api::core::{ClassHash, CompiledClassHash, Nonce};
+use starknet_api::state::StorageKey;
 use tracing::trace;
 
 use super::cache::ClassCache;
@@ -144,8 +144,8 @@ impl<'a> StateProviderDb<'a> {
 impl<'a> StateReader for StateProviderDb<'a> {
     fn get_class_hash_at(
         &self,
-        contract_address: katana_cairo::starknet_api::core::ContractAddress,
-    ) -> StateResult<katana_cairo::starknet_api::core::ClassHash> {
+        contract_address: starknet_api::core::ContractAddress,
+    ) -> StateResult<starknet_api::core::ClassHash> {
         self.provider
             .class_hash_of_contract(utils::to_address(contract_address))
             .map(|v| ClassHash(v.unwrap_or_default()))
@@ -154,8 +154,8 @@ impl<'a> StateReader for StateProviderDb<'a> {
 
     fn get_compiled_class_hash(
         &self,
-        class_hash: katana_cairo::starknet_api::core::ClassHash,
-    ) -> StateResult<katana_cairo::starknet_api::core::CompiledClassHash> {
+        class_hash: starknet_api::core::ClassHash,
+    ) -> StateResult<starknet_api::core::CompiledClassHash> {
         if let Some(hash) = self
             .provider
             .compiled_class_hash_of_class_hash(class_hash.0)
@@ -185,8 +185,8 @@ impl<'a> StateReader for StateProviderDb<'a> {
 
     fn get_nonce_at(
         &self,
-        contract_address: katana_cairo::starknet_api::core::ContractAddress,
-    ) -> StateResult<katana_cairo::starknet_api::core::Nonce> {
+        contract_address: starknet_api::core::ContractAddress,
+    ) -> StateResult<starknet_api::core::Nonce> {
         self.provider
             .nonce(utils::to_address(contract_address))
             .map(|n| Nonce(n.unwrap_or_default()))
@@ -195,9 +195,9 @@ impl<'a> StateReader for StateProviderDb<'a> {
 
     fn get_storage_at(
         &self,
-        contract_address: katana_cairo::starknet_api::core::ContractAddress,
-        key: katana_cairo::starknet_api::state::StorageKey,
-    ) -> StateResult<katana_cairo::starknet_api::hash::StarkHash> {
+        contract_address: starknet_api::core::ContractAddress,
+        key: starknet_api::state::StorageKey,
+    ) -> StateResult<starknet_api::hash::StarkHash> {
         self.storage(utils::to_address(contract_address), *key.0.key())
             .map(|v| v.unwrap_or_default())
             .map_err(|e| StateError::StateReadError(e.to_string()))

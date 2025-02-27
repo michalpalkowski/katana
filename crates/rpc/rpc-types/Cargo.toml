@@ -7,7 +7,6 @@ version.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-katana-cairo.workspace = true
 katana-core.workspace = true
 katana-executor.workspace = true
 katana-pool.workspace = true
@@ -16,6 +15,8 @@ katana-provider.workspace = true
 katana-trie.workspace = true
 
 anyhow.workspace = true
+cairo-lang-starknet-classes.workspace = true
+cairo-lang-utils.workspace = true
 derive_more.workspace = true
 futures.workspace = true
 jsonrpsee = { workspace = true, features = [ "server" ] }
@@ -24,6 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_with.workspace = true
 starknet.workspace = true
+starknet_api.workspace = true
 thiserror.workspace = true
 
 alloy-primitives.workspace = true

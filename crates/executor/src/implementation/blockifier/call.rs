@@ -8,11 +8,11 @@ use blockifier::execution::entry_point::{
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::state_api::StateReader;
 use blockifier::transaction::objects::{DeprecatedTransactionInfo, TransactionInfo};
-use katana_cairo::cairo_vm::vm::runners::cairo_runner::RunResources;
-use katana_cairo::starknet_api::core::EntryPointSelector;
-use katana_cairo::starknet_api::execution_resources::GasAmount;
-use katana_cairo::starknet_api::transaction::fields::Calldata;
+use cairo_vm::vm::runners::cairo_runner::RunResources;
 use katana_primitives::Felt;
+use starknet_api::core::EntryPointSelector;
+use starknet_api::execution_resources::GasAmount;
+use starknet_api::transaction::fields::Calldata;
 
 use super::utils::to_blk_address;
 use crate::{EntryPointCall, ExecutionError};

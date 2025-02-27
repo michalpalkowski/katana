@@ -1,6 +1,6 @@
 use std::collections::{hash_map, HashMap, HashSet};
 
-pub use katana_cairo::cairo_vm::types::builtin_name::BuiltinName;
+pub use cairo_vm::types::builtin_name::BuiltinName;
 
 use crate::class::ClassHash;
 use crate::contract::ContractAddress;

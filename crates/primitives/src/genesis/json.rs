@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use alloy_primitives::U256;
 use base64::prelude::*;
-use katana_cairo::cairo_vm::types::errors::program_errors::ProgramError;
+use cairo_vm::types::errors::program_errors::ProgramError;
 use serde::de::value::MapAccessDeserializer;
 use serde::de::Visitor;
 use serde::{Deserialize, Serialize};

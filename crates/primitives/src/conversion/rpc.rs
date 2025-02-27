@@ -3,11 +3,7 @@ use std::io::{self, Read, Write};
 use std::mem;
 
 use anyhow::{Context, Result};
-use katana_cairo::lang::starknet_classes::casm_contract_class::CasmContractClass;
-use katana_cairo::starknet_api::contract_class::EntryPointType;
-use katana_cairo::starknet_api::deprecated_contract_class::{
-    ContractClassAbiEntry, EntryPointV0, TypedParameter,
-};
+use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use serde::Deserialize;
 use serde_json::json;
 use serde_with::serde_as;
@@ -24,6 +20,10 @@ use starknet::core::types::{
     LegacyContractAbiEntry, LegacyContractEntryPoint, LegacyEntryPointsByType, LegacyEventAbiEntry,
     LegacyEventAbiType, LegacyFunctionAbiEntry, LegacyFunctionAbiType, LegacyStructAbiEntry,
     LegacyStructAbiType, LegacyStructMember, LegacyTypedParameter,
+};
+use starknet_api::contract_class::EntryPointType;
+use starknet_api::deprecated_contract_class::{
+    ContractClassAbiEntry, EntryPointV0, TypedParameter,
 };
 
 use crate::class::{ClassHash, CompiledClassHash, LegacyContractClass};
@@ -183,10 +183,10 @@ pub fn legacy_rpc_to_class(
 /// [ContractClass](cairo_lang_starknet::contract_class::ContractClass) type.
 pub fn rpc_to_cairo_contract_class(
     contract_class: &FlattenedSierraClass,
-) -> Result<katana_cairo::lang::starknet_classes::contract_class::ContractClass, std::io::Error> {
+) -> Result<cairo_lang_starknet_classes::contract_class::ContractClass, std::io::Error> {
     let value = serde_json::to_value(contract_class)?;
 
-    Ok(katana_cairo::lang::starknet_classes::contract_class::ContractClass {
+    Ok(cairo_lang_starknet_classes::contract_class::ContractClass {
         abi: serde_json::from_value(value["abi"].clone()).ok(),
         sierra_program: serde_json::from_value(value["sierra_program"].clone())?,
         entry_points_by_type: serde_json::from_value(value["entry_points_by_type"].clone())?,
@@ -199,7 +199,7 @@ pub fn rpc_to_cairo_contract_class(
 }
 
 pub fn compress_legacy_program_data(
-    legacy_program: katana_cairo::starknet_api::deprecated_contract_class::Program,
+    legacy_program: starknet_api::deprecated_contract_class::Program,
 ) -> Result<Vec<u8>, io::Error> {
     let bytes = serde_json::to_vec(&legacy_program)?;
 

@@ -2,9 +2,9 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 
 use blockifier::execution::contract_class::{CompiledClassV1, RunnableCompiledClass};
-use katana_cairo::starknet_api::contract_class::SierraVersion;
 use katana_primitives::class::{ClassHash, CompiledClass, ContractClass};
 use quick_cache::sync::Cache;
+use starknet_api::contract_class::SierraVersion;
 
 use super::utils::to_class;
 

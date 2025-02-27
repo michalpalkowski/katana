@@ -4,13 +4,8 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 
-use katana_cairo::lang::starknet_classes::contract_class::ContractEntryPoints;
-use katana_cairo::lang::utils::bigint::BigUintAsHex;
-use katana_cairo::starknet_api::contract_class::EntryPointType;
-use katana_cairo::starknet_api::deprecated_contract_class::{
-    ContractClassAbiEntry, EntryPointV0, Program as LegacyProgram,
-};
-use katana_cairo::starknet_api::serde_utils::deserialize_optional_contract_class_abi_entry_vector;
+use cairo_lang_starknet_classes::contract_class::ContractEntryPoints;
+use cairo_lang_utils::bigint::BigUintAsHex;
 use katana_primitives::class::{ContractClass, LegacyContractClass, SierraContractClass};
 use katana_primitives::{
     Felt, {self},
@@ -19,6 +14,11 @@ use serde::{Deserialize, Serialize};
 use serde_json_pythonic::to_string_pythonic;
 use starknet::core::serde::byte_array::base64;
 use starknet::core::types::{CompressedLegacyContractClass, FlattenedSierraClass};
+use starknet_api::contract_class::EntryPointType;
+use starknet_api::deprecated_contract_class::{
+    ContractClassAbiEntry, EntryPointV0, Program as LegacyProgram,
+};
+use starknet_api::serde_utils::deserialize_optional_contract_class_abi_entry_vector;
 
 /// RPC representation of the contract class.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +100,7 @@ impl TryFrom<RpcSierraContractClass> for SierraContractClass {
     type Error = ConversionError;
 
     fn try_from(value: RpcSierraContractClass) -> Result<Self, Self::Error> {
-        use katana_cairo::lang::starknet_classes::abi;
+        use cairo_lang_starknet_classes::abi;
 
         let abi = serde_json::from_str::<Option<abi::Contract>>(&value.abi)?;
         let program = value

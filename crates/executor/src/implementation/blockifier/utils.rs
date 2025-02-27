@@ -21,31 +21,8 @@ use blockifier::transaction::objects::{HasRelatedFeeType, TransactionExecutionIn
 use blockifier::transaction::transaction_execution::Transaction;
 use blockifier::transaction::transactions::ExecutableTransaction;
 use blockifier::versioned_constants::VersionedConstants;
-use katana_cairo::cairo_vm::types::errors::program_errors::ProgramError;
-use katana_cairo::cairo_vm::vm::runners::cairo_runner::ExecutionResources;
-use katana_cairo::starknet_api::block::{
-    BlockInfo, BlockNumber, BlockTimestamp, FeeType, GasPriceVector, GasPrices, NonzeroGasPrice,
-    StarknetVersion,
-};
-use katana_cairo::starknet_api::contract_class::{ClassInfo, EntryPointType, SierraVersion};
-use katana_cairo::starknet_api::core::{
-    self, ChainId, ClassHash, CompiledClassHash, ContractAddress, EntryPointSelector, Nonce,
-};
-use katana_cairo::starknet_api::data_availability::DataAvailabilityMode;
-use katana_cairo::starknet_api::executable_transaction::{
-    DeclareTransaction, DeployAccountTransaction, InvokeTransaction, L1HandlerTransaction,
-};
-use katana_cairo::starknet_api::transaction::fields::{
-    AccountDeploymentData, Calldata, ContractAddressSalt, Fee, PaymasterData, ResourceBounds, Tip,
-    TransactionSignature, ValidResourceBounds,
-};
-use katana_cairo::starknet_api::transaction::{
-    DeclareTransaction as ApiDeclareTransaction, DeclareTransactionV0V1, DeclareTransactionV2,
-    DeclareTransactionV3, DeployAccountTransaction as ApiDeployAccountTransaction,
-    DeployAccountTransactionV1, DeployAccountTransactionV3,
-    InvokeTransaction as ApiInvokeTransaction, InvokeTransactionV3, TransactionHash,
-    TransactionVersion,
-};
+use cairo_vm::types::errors::program_errors::ProgramError;
+use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use katana_primitives::chain::NamedChainId;
 use katana_primitives::env::{BlockEnv, CfgEnv};
 use katana_primitives::fee::{PriceUnit, TxFeeInfo};
@@ -57,6 +34,29 @@ use katana_primitives::transaction::{
 use katana_primitives::{class, event, message, trace};
 use katana_provider::traits::contract::ContractClassProvider;
 use starknet::core::utils::parse_cairo_short_string;
+use starknet_api::block::{
+    BlockInfo, BlockNumber, BlockTimestamp, FeeType, GasPriceVector, GasPrices, NonzeroGasPrice,
+    StarknetVersion,
+};
+use starknet_api::contract_class::{ClassInfo, EntryPointType, SierraVersion};
+use starknet_api::core::{
+    self, ChainId, ClassHash, CompiledClassHash, ContractAddress, EntryPointSelector, Nonce,
+};
+use starknet_api::data_availability::DataAvailabilityMode;
+use starknet_api::executable_transaction::{
+    DeclareTransaction, DeployAccountTransaction, InvokeTransaction, L1HandlerTransaction,
+};
+use starknet_api::transaction::fields::{
+    AccountDeploymentData, Calldata, ContractAddressSalt, Fee, PaymasterData, ResourceBounds, Tip,
+    TransactionSignature, ValidResourceBounds,
+};
+use starknet_api::transaction::{
+    DeclareTransaction as ApiDeclareTransaction, DeclareTransactionV0V1, DeclareTransactionV2,
+    DeclareTransactionV3, DeployAccountTransaction as ApiDeployAccountTransaction,
+    DeployAccountTransactionV1, DeployAccountTransactionV3,
+    InvokeTransaction as ApiInvokeTransaction, InvokeTransactionV3, TransactionHash,
+    TransactionVersion,
+};
 
 use super::state::CachedState;
 use crate::abstraction::ExecutionFlags;
@@ -144,7 +144,7 @@ pub fn transact<S: StateReader>(
 }
 
 pub fn to_executor_tx(tx: ExecutableTxWithHash, mut flags: ExecutionFlags) -> Transaction {
-    use katana_cairo::starknet_api::executable_transaction::AccountTransaction as ExecTx;
+    use starknet_api::executable_transaction::AccountTransaction as ExecTx;
 
     let hash = tx.hash;
 
@@ -165,15 +165,13 @@ pub fn to_executor_tx(tx: ExecutableTxWithHash, mut flags: ExecutionFlags) -> Tr
                 let signature = tx.signature;
 
                 let tx = InvokeTransaction {
-                    tx: ApiInvokeTransaction::V0(
-                        katana_cairo::starknet_api::transaction::InvokeTransactionV0 {
-                            entry_point_selector: EntryPointSelector(tx.entry_point_selector),
-                            contract_address: to_blk_address(tx.contract_address),
-                            signature: TransactionSignature(signature),
-                            calldata: Calldata(Arc::new(calldata)),
-                            max_fee: Fee(tx.max_fee),
-                        },
-                    ),
+                    tx: ApiInvokeTransaction::V0(starknet_api::transaction::InvokeTransactionV0 {
+                        entry_point_selector: EntryPointSelector(tx.entry_point_selector),
+                        contract_address: to_blk_address(tx.contract_address),
+                        signature: TransactionSignature(signature),
+                        calldata: Calldata(Arc::new(calldata)),
+                        max_fee: Fee(tx.max_fee),
+                    }),
                     tx_hash: TransactionHash(hash),
                 };
 
@@ -188,15 +186,13 @@ pub fn to_executor_tx(tx: ExecutableTxWithHash, mut flags: ExecutionFlags) -> Tr
                 let signature = tx.signature;
 
                 let tx = InvokeTransaction {
-                    tx: ApiInvokeTransaction::V1(
-                        katana_cairo::starknet_api::transaction::InvokeTransactionV1 {
-                            max_fee: Fee(tx.max_fee),
-                            nonce: Nonce(tx.nonce),
-                            sender_address: to_blk_address(tx.sender_address),
-                            signature: TransactionSignature(signature),
-                            calldata: Calldata(Arc::new(calldata)),
-                        },
-                    ),
+                    tx: ApiInvokeTransaction::V1(starknet_api::transaction::InvokeTransactionV1 {
+                        max_fee: Fee(tx.max_fee),
+                        nonce: Nonce(tx.nonce),
+                        sender_address: to_blk_address(tx.sender_address),
+                        signature: TransactionSignature(signature),
+                        calldata: Calldata(Arc::new(calldata)),
+                    }),
                     tx_hash: TransactionHash(hash),
                 };
 
@@ -365,7 +361,7 @@ pub fn to_executor_tx(tx: ExecutableTxWithHash, mut flags: ExecutionFlags) -> Tr
 
         ExecutableTx::L1Handler(tx) => Transaction::L1Handler(L1HandlerTransaction {
             paid_fee_on_l1: Fee(tx.paid_fee_on_l1),
-            tx: katana_cairo::starknet_api::transaction::L1HandlerTransaction {
+            tx: starknet_api::transaction::L1HandlerTransaction {
                 nonce: core::Nonce(tx.nonce),
                 calldata: Calldata(Arc::new(tx.calldata)),
                 version: TransactionVersion(1u128.into()),
@@ -561,7 +557,7 @@ pub fn to_blk_chain_id(chain_id: katana_primitives::chain::ChainId) -> ChainId {
 }
 
 pub fn to_class_info(class: class::CompiledClass) -> Result<ClassInfo, ProgramError> {
-    use katana_cairo::starknet_api::contract_class::ContractClass;
+    use starknet_api::contract_class::ContractClass;
 
     // TODO: @kariy not sure of the variant that must be used in this case. Should we change the
     // return type to include this case of error for contract class conversions?
@@ -775,12 +771,12 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use blockifier::execution::entry_point::CallEntryPoint;
-    use katana_cairo::cairo_vm::types::builtin_name::BuiltinName;
-    use katana_cairo::cairo_vm::vm::runners::cairo_runner::ExecutionResources;
-    use katana_cairo::starknet_api::core::EntryPointSelector;
-    use katana_cairo::starknet_api::felt;
-    use katana_cairo::starknet_api::transaction::{EventContent, EventData, EventKey};
+    use cairo_vm::types::builtin_name::BuiltinName;
+    use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
     use katana_primitives::Felt;
+    use starknet_api::core::EntryPointSelector;
+    use starknet_api::felt;
+    use starknet_api::transaction::{EventContent, EventData, EventKey};
 
     use super::*;
 
