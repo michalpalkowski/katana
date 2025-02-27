@@ -2,18 +2,7 @@
 resolver = "2"
 
 members = [
-	"bin/dojo-language-server",
 	"bin/katana",
-	"bin/sozo",
-	"bin/torii",
-	"crates/dojo/bindgen",
-	"crates/dojo/core",
-	"crates/dojo/lang",
-	"crates/dojo/test-utils",
-	"crates/dojo/types",
-	"crates/dojo/utils",
-	"crates/dojo/world",
-	"crates/dojo/world/abigen",
 	"crates/katana/chain-spec",
 	"crates/katana/cli",
 	"crates/katana/controller",
@@ -41,23 +30,13 @@ members = [
 	"crates/katana/tasks",
 	"crates/katana/trie",
 	"crates/metrics",
-	"crates/sozo/scarbext",
-	"crates/sozo/signers",
-	"crates/sozo/walnut",
-	"crates/torii/cli",
-	"crates/torii/client",
-	"crates/torii/server",
-	"crates/torii/types-test",
-	"examples/spawn-and-move",
-	"scripts/verify_db_balances",
-	"xtask/generate-test-db",
 ]
 
 [workspace.package]
 edition = "2021"
 license = "Apache-2.0"
 license-file = "LICENSE"
-repository = "https://github.com/dojoengine/dojo/"
+repository = "https://github.com/dojoengine/katana/"
 version = "1.2.2"
 
 [profile.performance]
@@ -73,21 +52,11 @@ inherits = "release"
 [workspace.dependencies]
 cainome = { git = "https://github.com/cartridge-gg/cainome", tag = "v0.4.12", features = [ "abigen-rs" ] }
 cainome-cairo-serde = { git = "https://github.com/cartridge-gg/cainome", tag = "v0.4.12" }
-dojo-utils = { path = "crates/dojo/utils" }
+dojo-test-utils = { git = "https://github.com/dojoengine/dojo", tag = "v1.2.2" }
+dojo-utils = { git = "https://github.com/dojoengine/dojo", tag = "v1.2.2" }
 
 # metrics
 dojo-metrics = { path = "crates/metrics" }
-
-# dojo-lang
-dojo-bindgen = { path = "crates/dojo/bindgen" }
-dojo-core = { path = "crates/dojo/core" }
-dojo-lang = { path = "crates/dojo/lang" }
-dojo-test-utils = { path = "crates/dojo/test-utils" }
-dojo-types = { path = "crates/dojo/types" }
-dojo-world = { path = "crates/dojo/world" }
-
-# dojo-world
-topological-sort = "0.2"
 
 # katana
 katana-cairo = { path = "crates/katana/cairo" }
@@ -115,24 +84,6 @@ katana-slot-controller = { path = "crates/katana/controller" }
 katana-stage = { path = "crates/katana/sync/stage" }
 katana-tasks = { path = "crates/katana/tasks" }
 katana-trie = { path = "crates/katana/trie" }
-
-# torii
-torii-cli = { path = "crates/torii/cli" }
-torii-client = { path = "crates/torii/client" }
-torii-graphql = { path = "crates/torii/graphql" }
-torii-grpc = { path = "crates/torii/grpc" }
-torii-indexer = { path = "crates/torii/indexer" }
-torii-relay = { path = "crates/torii/libp2p" }
-torii-runner = { path = "crates/torii/runner" }
-torii-server = { path = "crates/torii/server" }
-torii-sqlite = { path = "crates/torii/sqlite" }
-torii-typed-data = { path = "crates/torii/typed-data" }
-
-# sozo
-sozo-ops = { path = "crates/sozo/ops" }
-sozo-scarbext = { path = "crates/sozo/scarbext" }
-sozo-signers = { path = "crates/sozo/signers" }
-sozo-walnut = { path = "crates/sozo/walnut" }
 
 anyhow = "1.0.89"
 arbitrary = { version = "1.3.2", features = [ "derive" ] }
@@ -239,7 +190,6 @@ walkdir = "2.5.0"
 # TODO: see if we still need the git version
 ipfs-api-backend-hyper = { git = "https://github.com/ferristseng/rust-ipfs-api", rev = "af2c17f7b19ef5b9898f458d97a90055c3605633", features = [ "with-hyper-rustls", "with-send-sync" ] }
 mime_guess = "2.0"
-
 
 # server
 hyper = "0.14.27"
