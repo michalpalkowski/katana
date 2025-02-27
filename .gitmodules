@@ -1,6 +1,6 @@
-[submodule "crates/katana/contracts/messaging/solidity/lib/forge-std"]
-	path = crates/katana/contracts/messaging/solidity/lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
-[submodule "crates/katana/contracts/piltover"]
-	path = crates/katana/contracts/piltover
+[submodule "crates/contracts/messaging/solidity/lib/forge-std"]
+	path = crates/contracts/messaging/solidity/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std.git
+[submodule "crates/contracts/piltover"]
+	path = crates/contracts/piltover
 	url = https://github.com/keep-starknet-strange/piltover.git
