@@ -6220,7 +6220,6 @@ dependencies = [
  "katana-runner-macro",
  "starknet",
  "tokio",
- "url",
 ]
 
 [[package]]

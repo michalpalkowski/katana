@@ -11,11 +11,10 @@ use katana_node_bindings::{Katana, KatanaInstance};
 pub use katana_runner_macro::test;
 use starknet::accounts::{ExecutionEncoding, SingleOwnerAccount};
 use starknet::core::types::{BlockId, BlockTag, Felt};
-use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::JsonRpcClient;
+use starknet::providers::jsonrpc::HttpTransport;
 use starknet::signers::LocalWallet;
 use tokio::sync::Mutex;
-use url::Url;
 use utils::find_free_port;
 
 #[allow(dead_code)]
@@ -166,7 +165,7 @@ impl KatanaRunner {
             utils::listen_to_stdout(&log_file_path_sent, stdout);
         });
 
-        let provider = JsonRpcClient::new(HttpTransport::new(instance.endpoint_url()));
+        let provider = instance.starknet_provider();
         let contract = Mutex::new(Option::None);
 
         Ok(KatanaRunner { instance, provider, log_file_path, contract })
@@ -180,16 +179,8 @@ impl KatanaRunner {
         &self.provider
     }
 
-    pub fn endpoint(&self) -> String {
-        self.instance.endpoint()
-    }
-
-    pub fn url(&self) -> Url {
-        self.instance.endpoint_url()
-    }
-
-    pub fn owned_provider(&self) -> JsonRpcClient<HttpTransport> {
-        JsonRpcClient::new(HttpTransport::new(self.url()))
+    pub fn starknet_provider(&self) -> JsonRpcClient<HttpTransport> {
+        self.instance.starknet_provider()
     }
 
     // A contract needs to be deployed only once for each instance
@@ -234,7 +225,7 @@ impl KatanaRunner {
         };
 
         let chain_id = self.instance.chain_id();
-        let provider = self.owned_provider();
+        let provider = self.starknet_provider();
 
         let mut account = SingleOwnerAccount::new(
             provider,
