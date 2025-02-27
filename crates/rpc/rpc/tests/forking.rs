@@ -1,15 +1,14 @@
 use anyhow::Result;
 use assert_matches::assert_matches;
 use cainome::rs::abigen_legacy;
-use dojo_test_utils::sequencer::{get_default_test_config, TestSequencer};
 use katana_node::config::fork::ForkingConfig;
-use katana_node::config::sequencing::SequencingConfig;
 use katana_primitives::block::{BlockHash, BlockHashOrNumber, BlockIdOrTag, BlockNumber, BlockTag};
 use katana_primitives::chain::NamedChainId;
 use katana_primitives::event::MaybeForkedContinuationToken;
 use katana_primitives::genesis::constant::DEFAULT_ETH_FEE_TOKEN_ADDRESS;
 use katana_primitives::transaction::TxHash;
 use katana_primitives::{felt, Felt};
+use katana_utils::TestNode;
 use starknet::core::types::{EventFilter, MaybePendingBlockWithTxHashes, StarknetError};
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::{JsonRpcClient, Provider, ProviderError};
@@ -37,18 +36,18 @@ type LocalTestVector = Vec<((BlockNumber, BlockHash), TxHash)>;
 /// a single transaction.
 ///
 /// The returned [`TestVector`] is a list of all the locally created blocks and transactions.
-async fn setup_test_inner(no_mining: bool) -> (TestSequencer, impl Provider, LocalTestVector) {
-    let mut config = get_default_test_config(SequencingConfig::default());
+async fn setup_test_inner(no_mining: bool) -> (TestNode, impl Provider, LocalTestVector) {
+    let mut config = katana_utils::node::test_config();
     config.sequencing.no_mining = no_mining;
     config.forking = Some(forking_cfg());
 
-    let sequencer = TestSequencer::start(config).await;
-    let provider = JsonRpcClient::new(HttpTransport::new(sequencer.url()));
+    let sequencer = TestNode::new_with_config(config).await;
+    let provider = sequencer.starknet_provider();
 
     let mut txs_vector: LocalTestVector = Vec::new();
 
     // create some emtpy blocks and dummy transactions
-    abigen_legacy!(FeeToken, "crates/katana/rpc/rpc/tests/test_data/erc20.json");
+    abigen_legacy!(FeeToken, "crates/rpc/rpc/tests/test_data/erc20.json");
     let contract = FeeToken::new(DEFAULT_ETH_FEE_TOKEN_ADDRESS.into(), sequencer.account());
 
     if no_mining {
@@ -87,11 +86,11 @@ async fn setup_test_inner(no_mining: bool) -> (TestSequencer, impl Provider, Loc
     (sequencer, provider, txs_vector)
 }
 
-async fn setup_test() -> (TestSequencer, impl Provider, LocalTestVector) {
+async fn setup_test() -> (TestNode, impl Provider, LocalTestVector) {
     setup_test_inner(false).await
 }
 
-async fn setup_test_pending() -> (TestSequencer, impl Provider, LocalTestVector) {
+async fn setup_test_pending() -> (TestNode, impl Provider, LocalTestVector) {
     setup_test_inner(true).await
 }
 

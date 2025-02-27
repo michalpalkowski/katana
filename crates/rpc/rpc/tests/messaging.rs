@@ -7,15 +7,14 @@ use alloy::providers::ProviderBuilder;
 use alloy::sol;
 use anyhow::Result;
 use cainome::rs::abigen;
-use dojo_test_utils::sequencer::{get_default_test_config, TestSequencer};
 use dojo_utils::TransactionWaiter;
 use katana_messaging::MessagingConfig;
-use katana_node::config::sequencing::SequencingConfig;
 use katana_primitives::felt;
 use katana_primitives::utils::transaction::{
     compute_l1_handler_tx_hash, compute_l1_to_l2_message_hash,
 };
 use katana_rpc_types::receipt::ReceiptBlock;
+use katana_utils::TestNode;
 use rand::Rng;
 use starknet::accounts::{Account, ConnectedAccount};
 use starknet::contract::ContractFactory;
@@ -42,7 +41,7 @@ sol!(
     "tests/test_data/solidity/Contract1Compiled.json"
 );
 
-abigen!(CairoMessagingContract, "crates/katana/rpc/rpc/tests/test_data/cairo_l1_msg_contract.json");
+abigen!(CairoMessagingContract, "crates/rpc/rpc/tests/test_data/cairo_l1_msg_contract.json");
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_messaging() {
@@ -50,11 +49,9 @@ async fn test_messaging() {
     // remove that and use default anvil to let the OS assign the port.
     let port: u16 = rand::thread_rng().gen_range(35000..65000);
 
-    let l1_provider = {
-        ProviderBuilder::new()
-            .with_recommended_fillers()
-            .on_anvil_with_wallet_and_config(|anvil| anvil.port(port))
-    };
+    let l1_provider = ProviderBuilder::new()
+        .on_anvil_with_wallet_and_config(|anvil| anvil.port(port))
+        .expect("failed to build eth provider");
 
     // Deploy the core messaging contract on L1
     let core_contract = StarknetContract::deploy(&l1_provider).await.unwrap();
@@ -70,9 +67,9 @@ async fn test_messaging() {
         from_block: 0,
     };
 
-    let mut config = get_default_test_config(SequencingConfig::default());
+    let mut config = katana_utils::node::test_config();
     config.messaging = Some(messaging_config);
-    let sequencer = TestSequencer::start(config).await;
+    let sequencer = TestNode::new_with_config(config).await;
 
     let katana_account = sequencer.account();
 
@@ -172,7 +169,7 @@ async fn test_messaging() {
             recipient,
             selector,
             &l1_tx_calldata,
-            sequencer.provider().chain_id().await.unwrap(),
+            sequencer.starknet_provider().chain_id().await.unwrap(),
             nonce.to::<u64>().into(),
         );
 
@@ -235,11 +232,10 @@ async fn test_messaging() {
 
 #[tokio::test]
 async fn estimate_message_fee() -> Result<()> {
-    let config = get_default_test_config(SequencingConfig::default());
-    let sequencer = TestSequencer::start(config).await;
+    let sequencer = TestNode::new().await;
 
-    let provider = sequencer.provider();
     let account = sequencer.account();
+    let provider = account.provider();
 
     // Declare and deploy a l1 handler contract
     let path = PathBuf::from("tests/test_data/cairo_l1_msg_contract.json");

@@ -1,23 +1,17 @@
-use dojo_test_utils::sequencer::{get_default_test_config, TestSequencer};
-use katana_node::config::sequencing::SequencingConfig;
+use jsonrpsee::http_client::HttpClientBuilder;
 use katana_provider::traits::block::{BlockNumberProvider, BlockProvider};
 use katana_provider::traits::env::BlockEnvProvider;
 use katana_rpc_api::dev::DevApiClient;
-
-async fn create_test_sequencer() -> TestSequencer {
-    TestSequencer::start(get_default_test_config(SequencingConfig::default())).await
-}
-
-use jsonrpsee::http_client::HttpClientBuilder;
+use katana_utils::TestNode;
 
 #[tokio::test]
 async fn test_next_block_timestamp_in_past() {
-    let sequencer = create_test_sequencer().await;
+    let sequencer = TestNode::new().await;
     let backend = sequencer.backend();
     let provider = backend.blockchain.provider();
 
     // Create a jsonrpsee client for the DevApi
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
     let block_num = provider.latest_number().unwrap();
     let mut block_env = provider.block_env_at(block_num.into()).unwrap().unwrap();
@@ -39,12 +33,12 @@ async fn test_next_block_timestamp_in_past() {
 
 #[tokio::test]
 async fn test_set_next_block_timestamp_in_future() {
-    let sequencer = create_test_sequencer().await;
+    let sequencer = TestNode::new().await;
     let backend = sequencer.backend();
     let provider = backend.blockchain.provider();
 
     // Create a jsonrpsee client for the DevApi
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
     let block_num = provider.latest_number().unwrap();
     let mut block_env = provider.block_env_at(block_num.into()).unwrap().unwrap();
@@ -66,12 +60,12 @@ async fn test_set_next_block_timestamp_in_future() {
 }
 #[tokio::test]
 async fn test_increase_next_block_timestamp() {
-    let sequencer = create_test_sequencer().await;
+    let sequencer = TestNode::new().await;
     let backend = sequencer.backend();
     let provider = backend.blockchain.provider();
 
     // Create a jsonrpsee client for the DevApi
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
     let block_num = provider.latest_number().unwrap();
     let mut block_env = provider.block_env_at(block_num.into()).unwrap().unwrap();
@@ -101,9 +95,9 @@ async fn test_increase_next_block_timestamp() {
 
 #[tokio::test]
 async fn test_dev_api_enabled() {
-    let sequencer = create_test_sequencer().await;
+    let sequencer = TestNode::new().await;
 
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
     let accounts = client.predeployed_accounts().await.unwrap();
     assert!(!accounts.is_empty(), "predeployed accounts should not be empty");

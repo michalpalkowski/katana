@@ -53,7 +53,6 @@ inherits = "release"
 [workspace.dependencies]
 cainome = { git = "https://github.com/cartridge-gg/cainome", tag = "v0.4.12", features = [ "abigen-rs" ] }
 cainome-cairo-serde = { git = "https://github.com/cartridge-gg/cainome", tag = "v0.4.12" }
-dojo-test-utils = { git = "https://github.com/dojoengine/dojo", tag = "v1.2.2" }
 dojo-utils = { git = "https://github.com/dojoengine/dojo", tag = "v1.2.2" }
 
 # metrics

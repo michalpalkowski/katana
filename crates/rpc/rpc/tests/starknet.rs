@@ -6,16 +6,15 @@ use anyhow::Result;
 use assert_matches::assert_matches;
 use cainome::rs::{abigen, abigen_legacy};
 use common::split_felt;
-use dojo_test_utils::sequencer::{get_default_test_config, TestSequencer};
 use indexmap::IndexSet;
 use jsonrpsee::http_client::HttpClientBuilder;
-use katana_node::config::sequencing::SequencingConfig;
 use katana_primitives::event::ContinuationToken;
 use katana_primitives::genesis::constant::{
     DEFAULT_ACCOUNT_CLASS_HASH, DEFAULT_ETH_FEE_TOKEN_ADDRESS, DEFAULT_PREFUNDED_ACCOUNT_BALANCE,
     DEFAULT_STRK_FEE_TOKEN_ADDRESS, DEFAULT_UDC_ADDRESS,
 };
 use katana_rpc_api::dev::DevApiClient;
+use katana_utils::TestNode;
 use starknet::accounts::{
     Account, AccountError, AccountFactory, ConnectedAccount, ExecutionEncoding,
     OpenZeppelinAccountFactory, SingleOwnerAccount,
@@ -38,11 +37,10 @@ mod common;
 
 #[tokio::test]
 async fn declare_and_deploy_contract() -> Result<()> {
-    let sequencer =
-        TestSequencer::start(get_default_test_config(SequencingConfig::default())).await;
+    let sequencer = TestNode::new().await;
 
     let account = sequencer.account();
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
 
     let path: PathBuf = PathBuf::from("tests/test_data/cairo1_contract.json");
     let (contract, compiled_class_hash) = common::prepare_contract_declaration_params(&path)?;
@@ -105,11 +103,10 @@ async fn declare_and_deploy_contract() -> Result<()> {
 
 #[tokio::test]
 async fn declare_and_deploy_legacy_contract() -> Result<()> {
-    let sequencer =
-        TestSequencer::start(get_default_test_config(SequencingConfig::default())).await;
+    let sequencer = TestNode::new().await;
 
     let account = sequencer.account();
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
 
     let path = PathBuf::from("tests/test_data/cairo0_contract.json");
     let contract: LegacyContractClass = serde_json::from_reader(fs::File::open(path)?)?;
@@ -168,11 +165,10 @@ async fn declare_and_deploy_legacy_contract() -> Result<()> {
 
 #[tokio::test]
 async fn declaring_already_existing_class() -> Result<()> {
-    let config = get_default_test_config(SequencingConfig::default());
-    let sequencer = TestSequencer::start(config).await;
+    let sequencer = TestNode::new().await;
 
     let account = sequencer.account();
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
 
     let path = PathBuf::from("tests/test_data/cairo1_contract.json");
     let (contract, compiled_hash) = common::prepare_contract_declaration_params(&path)?;
@@ -208,13 +204,13 @@ async fn deploy_account(
     #[values(None, Some(1000))] block_time: Option<u64>,
 ) -> Result<()> {
     // setup test sequencer with the given configuration
-    let sequencing_config = SequencingConfig { block_time, ..Default::default() };
-    let mut config = get_default_test_config(sequencing_config);
+    let mut config = katana_utils::node::test_config();
     config.dev.fee = !disable_fee;
+    config.sequencing.block_time = block_time;
 
-    let sequencer = TestSequencer::start(config).await;
+    let sequencer = TestNode::new_with_config(config).await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let funding_account = sequencer.account();
     let chain_id = provider.chain_id().await?;
 
@@ -226,7 +222,7 @@ async fn deploy_account(
     let computed_address = get_contract_address(salt, class_hash, &ctor_args, Felt::ZERO);
 
     // Fund the new account
-    abigen_legacy!(FeeToken, "crates/katana/rpc/rpc/tests/test_data/erc20.json");
+    abigen_legacy!(FeeToken, "crates/rpc/rpc/tests/test_data/erc20.json");
     let contract = FeeToken::new(DEFAULT_ETH_FEE_TOKEN_ADDRESS.into(), &funding_account);
 
     // send enough tokens to the new_account's address just to send the deploy account tx
@@ -290,14 +286,13 @@ async fn deploy_account(
     Ok(())
 }
 
-abigen_legacy!(Erc20Contract, "crates/katana/rpc/rpc/tests/test_data/erc20.json", derives(Clone));
+abigen_legacy!(Erc20Contract, "crates/rpc/rpc/tests/test_data/erc20.json", derives(Clone));
 
 #[tokio::test]
 async fn estimate_fee() -> Result<()> {
-    let sequencer =
-        TestSequencer::start(get_default_test_config(SequencingConfig::default())).await;
+    let sequencer = TestNode::new().await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
 
     // setup contract to interact with (can be any existing contract that can be interacted with)
@@ -339,10 +334,11 @@ async fn concurrent_transactions_submissions(
     #[values(None, Some(1000))] block_time: Option<u64>,
 ) -> Result<()> {
     // setup test sequencer with the given configuration
-    let config = get_default_test_config(SequencingConfig { block_time, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.block_time = block_time;
+    let sequencer = TestNode::new_with_config(config).await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = Arc::new(sequencer.account());
 
     // function call params
@@ -406,10 +402,11 @@ async fn concurrent_transactions_submissions(
 async fn ensure_validator_have_valid_state(
     #[values(None, Some(1000))] block_time: Option<u64>,
 ) -> Result<()> {
-    let mut config = get_default_test_config(SequencingConfig { block_time, ..Default::default() });
+    let mut config = katana_utils::node::test_config();
     config.dev.fee = true;
+    config.sequencing.block_time = block_time;
 
-    let sequencer = TestSequencer::start(config).await;
+    let sequencer = TestNode::new_with_config(config).await;
     let account = sequencer.account();
 
     // setup test contract to interact with.
@@ -421,7 +418,8 @@ async fn ensure_validator_have_valid_state(
     let amount = Uint256 { low, high };
 
     let res = contract.transfer(&recipient, &amount).send().await?;
-    dojo_utils::TransactionWaiter::new(res.transaction_hash, &sequencer.provider()).await?;
+    dojo_utils::TransactionWaiter::new(res.transaction_hash, &sequencer.starknet_provider())
+        .await?;
 
     // this should fail validation due to insufficient balance because we specify max fee > the
     // actual balance that we have now.
@@ -439,9 +437,10 @@ async fn send_txs_with_insufficient_fee(
     #[values(None, Some(1000))] block_time: Option<u64>,
 ) -> Result<()> {
     // setup test sequencer with the given configuration
-    let mut config = get_default_test_config(SequencingConfig { block_time, ..Default::default() });
+    let mut config = katana_utils::node::test_config();
     config.dev.fee = !disable_fee;
-    let sequencer = TestSequencer::start(config).await;
+    config.sequencing.block_time = block_time;
+    let sequencer = TestNode::new_with_config(config).await;
 
     // setup test contract to interact with.
     let contract = Erc20Contract::new(DEFAULT_ETH_FEE_TOKEN_ADDRESS.into(), sequencer.account());
@@ -463,7 +462,7 @@ async fn send_txs_with_insufficient_fee(
         // matter what value is set, the transaction will always be executed successfully.
         assert_matches!(res, Ok(tx) => {
             let tx_hash = tx.transaction_hash;
-            assert_matches!(dojo_utils::TransactionWaiter::new(tx_hash, &sequencer.provider()).await, Ok(_));
+            assert_matches!(dojo_utils::TransactionWaiter::new(tx_hash, &sequencer.starknet_provider()).await, Ok(_));
         });
 
         let nonce = sequencer.account().get_nonce().await?;
@@ -484,7 +483,8 @@ async fn send_txs_with_insufficient_fee(
         // in no fee mode, account balance is ignored. as long as the max fee (aka resources) is
         // enough to at least run the account validation, the tx should be accepted.
         // Wait for the transaction to be accepted
-        dojo_utils::TransactionWaiter::new(res?.transaction_hash, &sequencer.provider()).await?;
+        dojo_utils::TransactionWaiter::new(res?.transaction_hash, &sequencer.starknet_provider())
+            .await?;
 
         // nonce should be incremented by 1 after a valid tx.
         let nonce = sequencer.account().get_nonce().await?;
@@ -507,18 +507,19 @@ async fn send_txs_with_invalid_signature(
     #[values(None, Some(1000))] block_time: Option<u64>,
 ) -> Result<()> {
     // setup test sequencer with the given configuration
-    let mut config = get_default_test_config(SequencingConfig { block_time, ..Default::default() });
+    let mut config = katana_utils::node::test_config();
     config.dev.account_validation = !disable_validate;
-    let sequencer = TestSequencer::start(config).await;
+    config.sequencing.block_time = block_time;
+    let sequencer = TestNode::new_with_config(config).await;
 
     // starknet-rs doesn't provide a way to manually set the signatures so instead we create an
     // account with random signer to simulate invalid signatures.
 
     let account = SingleOwnerAccount::new(
-        sequencer.provider(),
+        sequencer.starknet_provider(),
         LocalWallet::from(SigningKey::from_random()),
         sequencer.account().address(),
-        sequencer.provider().chain_id().await?,
+        sequencer.starknet_provider().chain_id().await?,
         ExecutionEncoding::New,
     );
 
@@ -540,7 +541,8 @@ async fn send_txs_with_invalid_signature(
 
     if disable_validate {
         // Wait for the transaction to be accepted
-        dojo_utils::TransactionWaiter::new(res?.transaction_hash, &sequencer.provider()).await?;
+        dojo_utils::TransactionWaiter::new(res?.transaction_hash, &sequencer.starknet_provider())
+            .await?;
 
         // nonce should be incremented by 1 after a valid tx.
         let nonce = sequencer.account().get_nonce().await?;
@@ -562,10 +564,11 @@ async fn send_txs_with_invalid_nonces(
     #[values(None, Some(1000))] block_time: Option<u64>,
 ) -> Result<()> {
     // setup test sequencer with the given configuration
-    let config = get_default_test_config(SequencingConfig { block_time, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.block_time = block_time;
+    let sequencer = TestNode::new_with_config(config).await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
 
     // setup test contract to interact with.
@@ -629,14 +632,14 @@ async fn send_txs_with_invalid_nonces(
 #[tokio::test]
 async fn get_events_no_pending() -> Result<()> {
     // setup test sequencer with the given configuration
-    let config =
-        get_default_test_config(SequencingConfig { no_mining: true, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.no_mining = true;
+    let sequencer = TestNode::new_with_config(config).await;
 
     // create a json rpc client to interact with the dev api.
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
 
     // setup test contract to interact with.
@@ -715,14 +718,14 @@ async fn get_events_no_pending() -> Result<()> {
 #[tokio::test]
 async fn get_events_with_pending() -> Result<()> {
     // setup test sequencer with the given configuration
-    let config =
-        get_default_test_config(SequencingConfig { no_mining: true, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.no_mining = true;
+    let sequencer = TestNode::new_with_config(config).await;
 
     // create a json rpc client to interact with the dev api.
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
 
     // setup test contract to interact with.
@@ -805,13 +808,13 @@ async fn get_events_with_pending() -> Result<()> {
 
 #[tokio::test]
 async fn trace() -> Result<()> {
-    let config =
-        get_default_test_config(SequencingConfig { no_mining: true, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.no_mining = true;
+    let sequencer = TestNode::new_with_config(config).await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
-    let rpc_client = HttpClientBuilder::default().build(sequencer.url())?;
+    let rpc_client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string())?;
 
     // setup contract to interact with (can be any existing contract that can be interacted with)
     let contract = Erc20Contract::new(DEFAULT_ETH_FEE_TOKEN_ADDRESS.into(), &account);
@@ -855,13 +858,13 @@ async fn trace() -> Result<()> {
 
 #[tokio::test]
 async fn block_traces() -> Result<()> {
-    let config =
-        get_default_test_config(SequencingConfig { no_mining: true, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.no_mining = true;
+    let sequencer = TestNode::new_with_config(config).await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
-    let rpc_client = HttpClientBuilder::default().build(sequencer.url())?;
+    let rpc_client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string())?;
 
     // setup contract to interact with (can be any existing contract that can be interacted with)
     let contract = Erc20Contract::new(DEFAULT_ETH_FEE_TOKEN_ADDRESS.into(), &account);
@@ -949,11 +952,11 @@ async fn block_traces() -> Result<()> {
 // order for this to pass.
 #[tokio::test]
 async fn v3_transactions() {
-    let config =
-        get_default_test_config(SequencingConfig { no_mining: true, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.no_mining = true;
+    let sequencer = TestNode::new_with_config(config).await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
 
     // craft a raw v3 transaction, should probably use abigen for simplicity
@@ -975,13 +978,13 @@ async fn v3_transactions() {
 
 #[tokio::test]
 async fn fetch_pending_blocks() {
-    let config =
-        get_default_test_config(SequencingConfig { no_mining: true, ..Default::default() });
-    let sequencer = TestSequencer::start(config).await;
+    let mut config = katana_utils::node::test_config();
+    config.sequencing.no_mining = true;
+    let sequencer = TestNode::new_with_config(config).await;
 
     // create a json rpc client to interact with the dev api.
-    let dev_client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
-    let provider = sequencer.provider();
+    let dev_client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
 
     // setup contract to interact with (can be any existing contract that can be interacted with)
@@ -1078,12 +1081,11 @@ async fn fetch_pending_blocks() {
 // Querying for pending blocks in instant mining mode will always return the last accepted block.
 #[tokio::test]
 async fn fetch_pending_blocks_in_instant_mode() {
-    let config = get_default_test_config(SequencingConfig::default());
-    let sequencer = TestSequencer::start(config).await;
+    let sequencer = TestNode::new().await;
 
     // create a json rpc client to interact with the dev api.
-    let dev_client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
-    let provider = sequencer.provider();
+    let dev_client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account();
 
     // Get the latest block hash before sending the tx beacuse the tx will generate a new block.
@@ -1169,10 +1171,9 @@ async fn fetch_pending_blocks_in_instant_mode() {
 
 #[tokio::test]
 async fn call_contract() {
-    let config = get_default_test_config(SequencingConfig::default());
-    let sequencer = TestSequencer::start(config).await;
+    let sequencer = TestNode::new().await;
 
-    let provider = sequencer.provider();
+    let provider = sequencer.starknet_provider();
     let account = sequencer.account().address();
 
     // -----------------------------------------------------------------------

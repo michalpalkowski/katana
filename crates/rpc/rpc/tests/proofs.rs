@@ -1,11 +1,9 @@
 use std::path::PathBuf;
 
 use assert_matches::assert_matches;
-use dojo_test_utils::sequencer::{get_default_test_config, TestSequencer};
 use jsonrpsee::http_client::HttpClientBuilder;
 use katana_chain_spec::ChainSpec;
 use katana_node::config::rpc::DEFAULT_RPC_MAX_PROOF_KEYS;
-use katana_node::config::sequencing::SequencingConfig;
 use katana_primitives::block::BlockIdOrTag;
 use katana_primitives::class::{ClassHash, CompiledClassHash};
 use katana_primitives::contract::{StorageKey, StorageValue};
@@ -15,6 +13,7 @@ use katana_rpc_types::trie::ContractStorageKeys;
 use katana_trie::{
     compute_classes_trie_value, compute_contract_state_hash, ClassesMultiProof, MultiProof,
 };
+use katana_utils::TestNode;
 use starknet::accounts::{Account, ConnectedAccount, SingleOwnerAccount};
 use starknet::core::types::BlockTag;
 use starknet::providers::jsonrpc::HttpTransport;
@@ -29,11 +28,10 @@ async fn proofs_limit() {
     use jsonrpsee::types::error::CallError;
     use serde_json::json;
 
-    let sequencer =
-        TestSequencer::start(get_default_test_config(SequencingConfig::default())).await;
+    let sequencer = TestNode::new().await;
 
     // We need to use the jsonrpsee client because `starknet-rs` doesn't yet support RPC 0
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
     // Because we're using the default configuration for instantiating the node, the RPC limit is
     // set to 100. The total keys is 35 + 35 + 35 = 105.
@@ -77,9 +75,7 @@ async fn proofs_limit() {
 
 #[tokio::test]
 async fn genesis_states() {
-    let cfg = get_default_test_config(SequencingConfig::default());
-
-    let sequencer = TestSequencer::start(cfg).await;
+    let sequencer = TestNode::new().await;
     let ChainSpec::Dev(chain_spec) = sequencer.backend().chain_spec.as_ref() else {
         panic!("should be dev chain spec")
     };
@@ -87,7 +83,7 @@ async fn genesis_states() {
     let genesis_states = chain_spec.state_updates();
 
     // We need to use the jsonrpsee client because `starknet-rs` doesn't yet support RPC 0.8.0
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
     // Check class declarations
     let genesis_classes =
@@ -190,9 +186,7 @@ async fn genesis_states() {
 
 #[tokio::test]
 async fn classes_proofs() {
-    let cfg = get_default_test_config(SequencingConfig::default());
-
-    let sequencer = TestSequencer::start(cfg).await;
+    let sequencer = TestNode::new().await;
     let account = sequencer.account();
 
     let (class_hash1, compiled_class_hash1) =
@@ -203,7 +197,7 @@ async fn classes_proofs() {
         declare(&account, "tests/test_data/test_sierra_contract.json").await;
 
     // We need to use the jsonrpsee client because `starknet-rs` doesn't yet support RPC 0.8.0
-    let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
+    let client = HttpClientBuilder::default().build(sequencer.rpc_addr().to_string()).unwrap();
 
     {
         let class_hash = class_hash1;

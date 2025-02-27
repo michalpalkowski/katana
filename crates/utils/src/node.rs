@@ -1,23 +1,27 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use katana_chain_spec::{dev, ChainSpec};
-use katana_core::backend::{storage::Database, Backend};
+use katana_core::backend::storage::Database;
+use katana_core::backend::Backend;
 use katana_executor::implementation::blockifier::BlockifierFactory;
-use katana_node::{
-    config::{
-        dev::DevConfig,
-        rpc::{RpcConfig, RpcModulesList, DEFAULT_RPC_ADDR},
-        sequencing::SequencingConfig,
-        Config,
-    },
-    LaunchedNode,
-};
-use katana_primitives::{address, chain::ChainId, ContractAddress};
+use katana_node::config::dev::DevConfig;
+use katana_node::config::rpc::{RpcConfig, RpcModulesList, DEFAULT_RPC_ADDR};
+use katana_node::config::sequencing::SequencingConfig;
+use katana_node::config::Config;
+use katana_node::LaunchedNode;
+use katana_primitives::chain::ChainId;
+use katana_primitives::{address, ContractAddress};
 use katana_provider::BlockchainProvider;
+use starknet::accounts::{ExecutionEncoding, SingleOwnerAccount};
+use starknet::core::types::BlockTag;
 pub use starknet::core::types::StarknetError;
-use starknet::providers::{jsonrpc::HttpTransport, JsonRpcClient, Url};
+use starknet::providers::jsonrpc::HttpTransport;
+use starknet::providers::{JsonRpcClient, Url};
 pub use starknet::providers::{Provider, ProviderError};
+use starknet::signers::{LocalWallet, SigningKey};
 
+#[allow(missing_debug_implementations)]
 pub struct TestNode {
     node: LaunchedNode,
 }
@@ -66,6 +70,25 @@ impl TestNode {
     pub fn starknet_provider(&self) -> JsonRpcClient<HttpTransport> {
         let url = Url::parse(&format!("http://{}", self.rpc_addr())).expect("failed to parse url");
         JsonRpcClient::new(HttpTransport::new(url))
+    }
+
+    pub fn account(&self) -> SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet> {
+        let (address, account) =
+            self.backend().chain_spec.genesis().accounts().next().expect("must have at least one");
+        let private_key = account.private_key().expect("must exist");
+        let signer = LocalWallet::from_signing_key(SigningKey::from_secret_scalar(private_key));
+
+        let mut account = SingleOwnerAccount::new(
+            self.starknet_provider(),
+            signer,
+            (*address).into(),
+            self.backend().chain_spec.id().into(),
+            ExecutionEncoding::New,
+        );
+
+        account.set_block_id(starknet::core::types::BlockId::Tag(BlockTag::Pending));
+
+        account
     }
 }
 
