@@ -30,6 +30,7 @@ members = [
 	"crates/sync/stage",
 	"crates/tasks",
 	"crates/trie",
+	"crates/utils",
 ]
 
 [workspace.package]
@@ -84,6 +85,7 @@ katana-slot-controller = { path = "crates/controller" }
 katana-stage = { path = "crates/sync/stage" }
 katana-tasks = { path = "crates/tasks" }
 katana-trie = { path = "crates/trie" }
+katana-utils = { path = "crates/utils" }
 
 anyhow = "1.0.89"
 arbitrary = { version = "1.3.2", features = [ "derive" ] }

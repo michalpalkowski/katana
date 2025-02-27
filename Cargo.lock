@@ -7619,6 +7619,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "katana-utils"
+version = "1.2.2"
+dependencies = [
+ "anyhow",
+ "katana-chain-spec 1.2.2",
+ "katana-core 1.2.2",
+ "katana-executor 1.2.2",
+ "katana-node 1.2.2",
+ "katana-primitives 1.2.2",
+ "katana-provider 1.2.2",
+ "starknet",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
