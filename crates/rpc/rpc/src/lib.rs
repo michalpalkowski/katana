@@ -16,9 +16,7 @@ pub mod cors;
 pub mod dev;
 pub mod health;
 pub mod metrics;
-pub mod saya;
 pub mod starknet;
-pub mod torii;
 mod utils;
 
 use cors::Cors;

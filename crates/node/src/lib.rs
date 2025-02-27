@@ -36,15 +36,11 @@ use katana_primitives::block::GasPrices;
 use katana_primitives::env::{CfgEnv, FeeTokenAddressses};
 use katana_rpc::cors::Cors;
 use katana_rpc::dev::DevApi;
-use katana_rpc::saya::SayaApi;
 use katana_rpc::starknet::forking::ForkedClient;
 use katana_rpc::starknet::{StarknetApi, StarknetApiConfig};
-use katana_rpc::torii::ToriiApi;
 use katana_rpc::{RpcServer, RpcServerHandle};
 use katana_rpc_api::dev::DevApiServer;
-use katana_rpc_api::saya::SayaApiServer;
 use katana_rpc_api::starknet::{StarknetApiServer, StarknetTraceApiServer, StarknetWriteApiServer};
-use katana_rpc_api::torii::ToriiApiServer;
 use katana_stage::Sequencing;
 use katana_tasks::TaskManager;
 use tracing::info;
@@ -301,16 +297,6 @@ pub async fn build(mut config: Config) -> Result<Node> {
 
     if config.rpc.apis.contains(&RpcModuleKind::Dev) {
         let api = DevApi::new(backend.clone(), block_producer.clone());
-        rpc_modules.merge(api.into_rpc())?;
-    }
-
-    if config.rpc.apis.contains(&RpcModuleKind::Torii) {
-        let api = ToriiApi::new(backend.clone(), pool.clone(), block_producer.clone());
-        rpc_modules.merge(api.into_rpc())?;
-    }
-
-    if config.rpc.apis.contains(&RpcModuleKind::Saya) {
-        let api = SayaApi::new(backend.clone(), block_producer.clone());
         rpc_modules.merge(api.into_rpc())?;
     }
 

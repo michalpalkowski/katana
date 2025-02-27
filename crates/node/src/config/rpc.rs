@@ -30,8 +30,6 @@ pub const DEFAULT_RPC_MAX_CALL_GAS: u64 = 1_000_000_000;
 #[strum(ascii_case_insensitive)]
 pub enum RpcModuleKind {
     Starknet,
-    Torii,
-    Saya,
     Dev,
 }
 
@@ -90,12 +88,7 @@ impl RpcModulesList {
 
     /// Creates a list with all the possible modules.
     pub fn all() -> Self {
-        Self(HashSet::from([
-            RpcModuleKind::Starknet,
-            RpcModuleKind::Torii,
-            RpcModuleKind::Saya,
-            RpcModuleKind::Dev,
-        ]))
+        Self(HashSet::from([RpcModuleKind::Starknet, RpcModuleKind::Dev]))
     }
 
     /// Adds a `module` to the list.
@@ -162,25 +155,23 @@ mod tests {
 
     #[test]
     fn test_parse_multiple() {
-        let list = RpcModulesList::parse("dev,torii,saya").unwrap();
+        let list = RpcModulesList::parse("starnet,dev").unwrap();
+        assert!(list.contains(&RpcModuleKind::Starknet));
         assert!(list.contains(&RpcModuleKind::Dev));
-        assert!(list.contains(&RpcModuleKind::Torii));
-        assert!(list.contains(&RpcModuleKind::Saya));
     }
 
     #[test]
     fn test_parse_with_spaces() {
-        let list = RpcModulesList::parse(" dev , torii ").unwrap();
+        let list = RpcModulesList::parse(" dev , ").unwrap();
         assert!(list.contains(&RpcModuleKind::Dev));
-        assert!(list.contains(&RpcModuleKind::Torii));
     }
 
     #[test]
     fn test_parse_duplicates() {
-        let list = RpcModulesList::parse("dev,dev,torii").unwrap();
+        let list = RpcModulesList::parse("dev,dev,starknet").unwrap();
         let mut expected = RpcModulesList::new();
+        expected.add(RpcModuleKind::Starknet);
         expected.add(RpcModuleKind::Dev);
-        expected.add(RpcModuleKind::Torii);
         assert_eq!(list, expected);
     }
 

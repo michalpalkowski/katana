@@ -678,11 +678,10 @@ chain_id.Named = "Mainnet"
         assert!(modules.contains(&RpcModuleKind::Starknet));
 
         // If the `--http.api` is specified, only the ones in the list will be exposed.
-        let config = NodeArgs::parse_from(["katana", "--http.api", "saya,torii"]).config().unwrap();
+        let config = NodeArgs::parse_from(["katana", "--http.api", "starknet"]).config().unwrap();
         let modules = config.rpc.apis;
-        assert_eq!(modules.len(), 2);
-        assert!(modules.contains(&RpcModuleKind::Saya));
-        assert!(modules.contains(&RpcModuleKind::Torii));
+        assert_eq!(modules.len(), 1);
+        assert!(modules.contains(&RpcModuleKind::Starknet));
 
         // Specifiying the dev module without enabling dev mode is forbidden.
         let err =
