@@ -95,7 +95,6 @@ type BlockProductionWithTxnsFuture =
 
 /// The type which responsible for block production.
 #[must_use = "BlockProducer does nothing unless polled"]
-#[allow(missing_debug_implementations)]
 pub struct BlockProducer<EF: ExecutorFactory> {
     /// The inner mode of mining.
     pub producer: Arc<RwLock<BlockProducerMode<EF>>>,
@@ -173,6 +172,12 @@ impl<EF: ExecutorFactory> BlockProducer<EF> {
 impl<EF: ExecutorFactory> Clone for BlockProducer<EF> {
     fn clone(&self) -> Self {
         BlockProducer { producer: self.producer.clone() }
+    }
+}
+
+impl<EF: ExecutorFactory> std::fmt::Debug for BlockProducer<EF> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockProducer").field("producer", &"..").finish()
     }
 }
 

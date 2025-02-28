@@ -22,6 +22,7 @@ use katana_node::config::rpc::RpcConfig;
 use katana_node::config::rpc::{RpcModuleKind, RpcModulesList};
 use katana_node::config::sequencing::SequencingConfig;
 use katana_node::config::Config;
+use katana_node::Node;
 use katana_primitives::genesis::allocation::DevAllocationsGenerator;
 use katana_primitives::genesis::constant::DEFAULT_PREFUNDED_ACCOUNT_BALANCE;
 use serde::{Deserialize, Serialize};
@@ -126,10 +127,10 @@ impl NodeArgs {
     async fn start_node(&self) -> Result<()> {
         // Build the node
         let config = self.config()?;
-        let node = katana_node::build(config).await.context("failed to build node")?;
+        let node = Node::build(config).await.context("failed to build node")?;
 
         if !self.silent {
-            utils::print_intro(self, &node.backend.chain_spec);
+            utils::print_intro(self, &node.backend().chain_spec);
         }
 
         // Launch the node

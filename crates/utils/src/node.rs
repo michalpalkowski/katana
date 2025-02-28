@@ -9,7 +9,7 @@ use katana_node::config::dev::DevConfig;
 use katana_node::config::rpc::{RpcConfig, RpcModulesList, DEFAULT_RPC_ADDR};
 use katana_node::config::sequencing::SequencingConfig;
 use katana_node::config::Config;
-use katana_node::LaunchedNode;
+use katana_node::{LaunchedNode, Node};
 use katana_primitives::chain::ChainId;
 use katana_primitives::{address, ContractAddress};
 use katana_provider::BlockchainProvider;
@@ -21,7 +21,7 @@ use starknet::providers::{JsonRpcClient, Url};
 pub use starknet::providers::{Provider, ProviderError};
 use starknet::signers::{LocalWallet, SigningKey};
 
-#[allow(missing_debug_implementations)]
+#[derive(Debug)]
 pub struct TestNode {
     node: LaunchedNode,
 }
@@ -39,7 +39,7 @@ impl TestNode {
 
     pub async fn new_with_config(config: Config) -> Self {
         Self {
-            node: katana_node::build(config)
+            node: Node::build(config)
                 .await
                 .expect("failed to build node")
                 .launch()
@@ -50,16 +50,16 @@ impl TestNode {
 
     /// Returns the address of the node's RPC server.
     pub fn rpc_addr(&self) -> &SocketAddr {
-        self.node.rpc.addr()
+        self.node.rpc().addr()
     }
 
     pub fn backend(&self) -> &Arc<Backend<BlockifierFactory>> {
-        &self.node.node.backend
+        self.node.node().backend()
     }
 
     /// Returns a reference to the blockchain provider.
     pub fn blockchain(&self) -> &BlockchainProvider<Box<dyn Database>> {
-        self.node.node.backend.blockchain.provider()
+        self.backend().blockchain.provider()
     }
 
     /// Returns a reference to the launched node handle.
