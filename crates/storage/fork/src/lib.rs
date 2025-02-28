@@ -1,5 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::mpsc::{
     channel as oneshot, Receiver as OneshotReceiver, RecvError, Sender as OneshotSender,
@@ -14,44 +15,41 @@ use futures::future::BoxFuture;
 use futures::stream::Stream;
 use futures::{Future, FutureExt};
 use katana_primitives::block::BlockHashOrNumber;
-use katana_primitives::class::{ClassHash, CompiledClassHash, ContractClass};
-use katana_primitives::contract::{ContractAddress, Nonce, StorageKey, StorageValue};
-use katana_primitives::conversion::rpc::{
-    compiled_class_hash_from_flattened_sierra_class, legacy_rpc_to_class,
+use katana_primitives::class::{
+    ClassHash, CompiledClassHash, ComputeClassHashError, ContractClass,
+    ContractClassCompilationError,
 };
+use katana_primitives::contract::{ContractAddress, Nonce, StorageKey, StorageValue};
 use katana_primitives::Felt;
+use katana_rpc_types::class::RpcContractClass;
 use parking_lot::Mutex;
-use starknet::core::types::{BlockId, ContractClass as RpcContractClass, StarknetError};
+use starknet::core::types::{BlockId, ContractClass as StarknetRsClass, StarknetError};
 use starknet::providers::{Provider, ProviderError as StarknetProviderError};
 use tracing::{error, trace};
-
-use crate::error::ProviderError;
-use crate::providers::in_memory::cache::CacheStateDb;
-use crate::traits::contract::ContractClassProvider;
-use crate::traits::state::{StateProofProvider, StateProvider, StateRootProvider};
-use crate::ProviderResult;
 
 const LOG_TARGET: &str = "forking::backend";
 
 type BackendResult<T> = Result<T, BackendError>;
 
 /// The types of response from [`Backend`].
+///
+/// This enum implements `Clone` because responses often need to be sent to multiple senders
+/// when requests are deduplicated. In the request deduplication logic, when multiple clients
+/// request the same data (e.g., the same contract's storage at the same key), only one actual
+/// RPC request is made to the remote provider. When that request completes, the same response
+/// needs to be distributed to all waiting senders, which requires cloning the response for each
+/// sender in the deduplication vector.
 #[derive(Debug, Clone)]
 enum BackendResponse {
     Nonce(BackendResult<Nonce>),
     Storage(BackendResult<StorageValue>),
     ClassHashAt(BackendResult<ClassHash>),
-    ClassAt(BackendResult<RpcContractClass>),
+    ClassAt(BackendResult<StarknetRsClass>),
 }
 
+/// Errors that can occur when interacting with the backend.
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum BackendError {
-    #[error("failed to send request to backend: {0}")]
-    FailedSendRequest(#[from] SendError),
-    #[error("failed to receive result from backend: {0}")]
-    FailedReceiveResult(#[from] RecvError),
-    #[error("compute class hash error: {0}")]
-    ComputeClassHashError(Arc<anyhow::Error>),
     #[error("failed to spawn backend thread: {0}")]
     BackendThreadInit(#[from] Arc<io::Error>),
     #[error("rpc provider error: {0}")]
@@ -130,7 +128,6 @@ enum BackendRequestIdentifier {
 ///
 /// It is responsible for processing [requests](BackendRequest) to fetch data from the remote
 /// provider.
-#[allow(missing_debug_implementations)]
 pub struct Backend<P> {
     /// The Starknet RPC provider that will be used to fetch data from.
     provider: Arc<P>,
@@ -146,6 +143,10 @@ pub struct Backend<P> {
     block: BlockId,
 }
 
+/////////////////////////////////////////////////////////////////
+// Backend implementation
+/////////////////////////////////////////////////////////////////
+
 impl<P> Backend<P>
 where
     P: Provider + Send + Sync + 'static,
@@ -155,7 +156,7 @@ where
     /// Create a new [Backend] with the given provider and block id, and returns a handle to it. The
     /// backend will start processing requests immediately upon creation.
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(provider: P, block_id: BlockHashOrNumber) -> Result<BackendHandle, BackendError> {
+    pub fn new(provider: P, block_id: BlockHashOrNumber) -> Result<BackendClient, BackendError> {
         let (handle, backend) = Self::new_inner(provider, block_id);
 
         thread::Builder::new()
@@ -174,7 +175,7 @@ where
         Ok(handle)
     }
 
-    fn new_inner(provider: P, block_id: BlockHashOrNumber) -> (BackendHandle, Backend<P>) {
+    fn new_inner(provider: P, block_id: BlockHashOrNumber) -> (BackendClient, Backend<P>) {
         let block = match block_id {
             BlockHashOrNumber::Hash(hash) => BlockId::Hash(hash),
             BlockHashOrNumber::Num(number) => BlockId::Number(number),
@@ -191,7 +192,7 @@ where
             queued_requests: VecDeque::new(),
         };
 
-        (BackendHandle(Mutex::new(tx)), backend)
+        (BackendClient(Mutex::new(tx)), backend)
     }
 
     /// This method is responsible for transforming the incoming request
@@ -365,29 +366,68 @@ where
     }
 }
 
+impl<P: Debug> Debug for Backend<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Backend")
+            .field("provider", &self.provider)
+            .field("request_dedup_map", &self.request_dedup_map)
+            .field("pending_requests", &self.pending_requests.len())
+            .field("queued_requests", &self.queued_requests.len())
+            .field("incoming", &self.incoming)
+            .field("block", &self.block)
+            .finish()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BackendClientError {
+    #[error("failed to send request to backend: {0}")]
+    FailedSendRequest(#[from] SendError),
+
+    #[error("failed to receive result from backend: {0}")]
+    FailedReceiveResult(#[from] RecvError),
+
+    #[error(transparent)]
+    BackendError(#[from] BackendError),
+
+    #[error("failed to convert class: {0}")]
+    ClassConversion(#[from] katana_rpc_types::class::ConversionError),
+
+    #[error("failed to compile class: {0}")]
+    ClassCompilation(#[from] ContractClassCompilationError),
+
+    #[error("failed to compute class hash: {0}")]
+    ClassHashComputation(#[from] ComputeClassHashError),
+
+    #[error("unexpected response: {0}")]
+    UnexpectedResponse(anyhow::Error),
+}
+
 /// A thread safe handler to [`Backend`].
 ///
 /// This is the primary interface for sending request to the backend to fetch data from the remote
 /// network.
 #[derive(Debug)]
-pub struct BackendHandle(Mutex<Sender<BackendRequest>>);
+pub struct BackendClient(Mutex<Sender<BackendRequest>>);
 
-impl Clone for BackendHandle {
+impl Clone for BackendClient {
     fn clone(&self) -> Self {
         Self(Mutex::new(self.0.lock().clone()))
     }
 }
 
-impl BackendHandle {
-    pub fn get_nonce(&self, address: ContractAddress) -> Result<Nonce, BackendError> {
+/////////////////////////////////////////////////////////////////
+// BackendHandle implementation
+/////////////////////////////////////////////////////////////////
+
+impl BackendClient {
+    pub fn get_nonce(&self, address: ContractAddress) -> Result<Option<Nonce>, BackendClientError> {
         trace!(target: LOG_TARGET, %address, "Requesting contract nonce.");
         let (req, rx) = BackendRequest::nonce(address);
         self.request(req)?;
         match rx.recv()? {
-            BackendResponse::Nonce(res) => res,
-            response => {
-                Err(BackendError::UnexpectedReceiveResult(Arc::new(anyhow!("{:?}", response))))
-            }
+            BackendResponse::Nonce(res) => handle_not_found_err(res),
+            response => Err(BackendClientError::UnexpectedResponse(anyhow!("{response:?}"))),
         }
     }
 
@@ -395,277 +435,73 @@ impl BackendHandle {
         &self,
         address: ContractAddress,
         key: StorageKey,
-    ) -> Result<StorageValue, BackendError> {
+    ) -> Result<Option<StorageValue>, BackendClientError> {
         trace!(target: LOG_TARGET, %address, key = %format!("{key:#x}"), "Requesting contract storage.");
         let (req, rx) = BackendRequest::storage(address, key);
         self.request(req)?;
         match rx.recv()? {
-            BackendResponse::Storage(res) => res,
-            response => {
-                Err(BackendError::UnexpectedReceiveResult(Arc::new(anyhow!("{:?}", response))))
-            }
+            BackendResponse::Storage(res) => handle_not_found_err(res),
+            response => Err(BackendClientError::UnexpectedResponse(anyhow!("{response:?}"))),
         }
     }
 
-    pub fn get_class_hash_at(&self, address: ContractAddress) -> Result<ClassHash, BackendError> {
+    pub fn get_class_hash_at(
+        &self,
+        address: ContractAddress,
+    ) -> Result<Option<ClassHash>, BackendClientError> {
         trace!(target: LOG_TARGET, %address, "Requesting contract class hash.");
         let (req, rx) = BackendRequest::class_hash(address);
         self.request(req)?;
         match rx.recv()? {
-            BackendResponse::ClassHashAt(res) => res,
-            response => {
-                Err(BackendError::UnexpectedReceiveResult(Arc::new(anyhow!("{:?}", response))))
-            }
+            BackendResponse::ClassHashAt(res) => handle_not_found_err(res),
+            response => Err(BackendClientError::UnexpectedResponse(anyhow!("{response:?}"))),
         }
     }
 
-    pub fn get_class_at(&self, class_hash: ClassHash) -> Result<RpcContractClass, BackendError> {
+    pub fn get_class_at(
+        &self,
+        class_hash: ClassHash,
+    ) -> Result<Option<ContractClass>, BackendClientError> {
         trace!(target: LOG_TARGET, class_hash = %format!("{class_hash:#x}"), "Requesting class.");
         let (req, rx) = BackendRequest::class(class_hash);
         self.request(req)?;
         match rx.recv()? {
-            BackendResponse::ClassAt(res) => res,
-            response => {
-                Err(BackendError::UnexpectedReceiveResult(Arc::new(anyhow!("{:?}", response))))
+            BackendResponse::ClassAt(res) => {
+                if let Some(class) = handle_not_found_err(res)? {
+                    let class = RpcContractClass::try_from(class)?;
+                    Ok(Some(ContractClass::try_from(class)?))
+                } else {
+                    Ok(None)
+                }
             }
+            response => Err(BackendClientError::UnexpectedResponse(anyhow!("{response:?}"))),
         }
     }
 
     pub fn get_compiled_class_hash(
         &self,
         class_hash: ClassHash,
-    ) -> Result<CompiledClassHash, BackendError> {
+    ) -> Result<Option<CompiledClassHash>, BackendClientError> {
         trace!(target: LOG_TARGET, class_hash = %format!("{class_hash:#x}"), "Requesting compiled class hash.");
-        let class = self.get_class_at(class_hash)?;
-        // if its a legacy class, then we just return back the class hash
-        // else if sierra class, then we have to compile it and compute the compiled class hash.
-        match class {
-            RpcContractClass::Legacy(_) => Ok(class_hash),
-            RpcContractClass::Sierra(sierra_class) => {
-                compiled_class_hash_from_flattened_sierra_class(&sierra_class)
-                    .map_err(|e| BackendError::ComputeClassHashError(Arc::new(e)))
-            }
+        if let Some(class) = self.get_class_at(class_hash)? {
+            let class = class.compile()?;
+            Ok(Some(class.class_hash()?))
+        } else {
+            Ok(None)
         }
     }
 
     /// Send a request to the backend thread.
-    fn request(&self, req: BackendRequest) -> Result<(), BackendError> {
+    fn request(&self, req: BackendRequest) -> Result<(), BackendClientError> {
         self.0.lock().try_send(req).map_err(|e| e.into_send_error())?;
         Ok(())
     }
 
     #[cfg(test)]
-    fn stats(&self) -> Result<usize, BackendError> {
+    fn stats(&self) -> Result<usize, BackendClientError> {
         let (req, rx) = BackendRequest::stats();
         self.request(req)?;
         Ok(rx.recv()?)
-    }
-}
-
-/// A shared cache that stores data fetched from the forked network.
-///
-/// Check in cache first, if not found, then fetch from the forked provider and store it in the
-/// cache to avoid fetching it again. This is shared across multiple instances of
-/// [`ForkedStateDb`](super::state::ForkedStateDb).
-#[derive(Clone, Debug)]
-pub struct SharedStateProvider(pub(crate) Arc<CacheStateDb<BackendHandle>>);
-
-impl SharedStateProvider {
-    pub(crate) fn new_with_backend(backend: BackendHandle) -> Self {
-        Self(Arc::new(CacheStateDb::new(backend)))
-    }
-}
-
-impl StateProvider for SharedStateProvider {
-    fn nonce(&self, address: ContractAddress) -> ProviderResult<Option<Nonce>> {
-        // TEMP:
-        //
-        // The nonce and class hash are stored in the same struct, so if we call either `nonce` or
-        // `class_hash_of_contract` first, the other would be filled with the default value.
-        // Currently, the data types that we're using doesn't allow us to distinguish between
-        // 'not fetched' vs the actual value.
-        //
-        // Right now, if the nonce value is 0, we couldn't distinguish whether that is the actual
-        // value or just the default value. So this filter is a pessimistic approach to always
-        // invalidate 0 nonce value in the cache.
-        //
-        // Meaning, if the nonce is 0, we always fetch the nonce from the forked provider, even if
-        // we already fetched it before.
-        //
-        // Similar story with `class_hash_of_contract`
-        //
-        if let nonce @ Some(_) = self
-            .0
-            .contract_state
-            .read()
-            .get(&address)
-            .map(|i| i.nonce)
-            .filter(|n| n != &Nonce::ZERO)
-        {
-            return Ok(nonce);
-        }
-
-        if let Some(nonce) = handle_not_found_err(self.0.get_nonce(address)).map_err(|error| {
-            error!(target: LOG_TARGET, %address, %error, "Fetching nonce.");
-            error
-        })? {
-            self.0.contract_state.write().entry(address).or_default().nonce = nonce;
-            Ok(Some(nonce))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn storage(
-        &self,
-        address: ContractAddress,
-        storage_key: StorageKey,
-    ) -> ProviderResult<Option<StorageValue>> {
-        if let value @ Some(_) =
-            self.0.storage.read().get(&address).and_then(|s| s.get(&storage_key))
-        {
-            return Ok(value.copied());
-        }
-
-        let value =
-            handle_not_found_err(self.0.get_storage(address, storage_key)).map_err(|error| {
-                error!(target: LOG_TARGET, %address, storage_key = %format!("{storage_key:#x}"), %error, "Fetching storage value.");
-                error
-            })?;
-
-        self.0
-            .storage
-            .write()
-            .entry(address)
-            .or_default()
-            .insert(storage_key, value.unwrap_or_default());
-
-        Ok(value)
-    }
-
-    fn class_hash_of_contract(
-        &self,
-        address: ContractAddress,
-    ) -> ProviderResult<Option<ClassHash>> {
-        // See comment at `nonce` for the explanation of this filter.
-        if let hash @ Some(_) = self
-            .0
-            .contract_state
-            .read()
-            .get(&address)
-            .map(|i| i.class_hash)
-            .filter(|h| h != &ClassHash::ZERO)
-        {
-            return Ok(hash);
-        }
-
-        if let Some(hash) =
-            handle_not_found_err(self.0.get_class_hash_at(address)).map_err(|error| {
-                error!(target: LOG_TARGET, %address, %error, "Fetching class hash.");
-                error
-            })?
-        {
-            self.0.contract_state.write().entry(address).or_default().class_hash = hash;
-            Ok(Some(hash))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-impl ContractClassProvider for SharedStateProvider {
-    fn class(&self, hash: ClassHash) -> ProviderResult<Option<ContractClass>> {
-        if let Some(class) = self.0.shared_contract_classes.classes.read().get(&hash) {
-            return Ok(Some(class.clone()));
-        }
-
-        let Some(class) = handle_not_found_err(self.0.get_class_at(hash)).map_err(|error| {
-            error!(target: LOG_TARGET, hash = %format!("{hash:#x}"), %error, "Fetching class.");
-            error
-        })?
-        else {
-            return Ok(None);
-        };
-
-        let (class_hash, class) = match class {
-            RpcContractClass::Legacy(class) => {
-                let (_, class) = legacy_rpc_to_class(&class).map_err(|error| {
-                    error!(target: LOG_TARGET, hash = %format!("{hash:#x}"), %error, "Parsing legacy class.");
-                    ProviderError::ParsingError(error.to_string())
-                })?;
-
-                (hash, class)
-            }
-
-            RpcContractClass::Sierra(class) => {
-                let value = serde_json::to_value(class).unwrap();
-                let class = serde_json::from_value(value).unwrap();
-                (hash, ContractClass::Class(class))
-            }
-        };
-
-        self.0.shared_contract_classes.classes.write().entry(class_hash).or_insert(class.clone());
-        Ok(Some(class))
-    }
-
-    fn compiled_class_hash_of_class_hash(
-        &self,
-        hash: ClassHash,
-    ) -> ProviderResult<Option<CompiledClassHash>> {
-        if let hash @ Some(_) = self.0.compiled_class_hashes.read().get(&hash) {
-            return Ok(hash.cloned());
-        }
-
-        if let Some(hash) =
-            handle_not_found_err(self.0.get_compiled_class_hash(hash)).map_err(|error| {
-                error!(target: LOG_TARGET, hash = %format!("{hash:#x}"), %error, "Fetching compiled class hash.");
-                error
-            })?
-        {
-            self.0.compiled_class_hashes.write().insert(hash, hash);
-            Ok(Some(hash))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-impl StateProofProvider for SharedStateProvider {
-    fn class_multiproof(&self, classes: Vec<ClassHash>) -> ProviderResult<katana_trie::MultiProof> {
-        let _ = classes;
-        unimplemented!("not supported in forked mode")
-    }
-
-    fn contract_multiproof(
-        &self,
-        addresses: Vec<ContractAddress>,
-    ) -> ProviderResult<katana_trie::MultiProof> {
-        let _ = addresses;
-        unimplemented!("not supported in forked mode")
-    }
-
-    fn storage_multiproof(
-        &self,
-        address: ContractAddress,
-        key: Vec<StorageKey>,
-    ) -> ProviderResult<katana_trie::MultiProof> {
-        let _ = address;
-        let _ = key;
-        unimplemented!("not supported in forked mode")
-    }
-}
-
-impl StateRootProvider for SharedStateProvider {
-    fn classes_root(&self) -> ProviderResult<Felt> {
-        unimplemented!("not supported in forked mode")
-    }
-
-    fn contracts_root(&self) -> ProviderResult<Felt> {
-        unimplemented!("not supported in forked mode")
-    }
-
-    fn storage_root(&self, _: ContractAddress) -> ProviderResult<Option<Felt>> {
-        unimplemented!("not supported in forked mode")
     }
 }
 
@@ -674,18 +510,19 @@ impl StateRootProvider for SharedStateProvider {
 ///
 /// This is to follow the Katana's provider APIs convention where 'not found'/'non-existent' should
 /// be represented as `Option::None`.
-fn handle_not_found_err<T>(result: Result<T, BackendError>) -> Result<Option<T>, BackendError> {
+fn handle_not_found_err<T>(
+    result: Result<T, BackendError>,
+) -> Result<Option<T>, BackendClientError> {
     match result {
         Ok(value) => Ok(Some(value)),
 
-        Err(BackendError::StarknetProvider(err_in_arc)) => match err_in_arc.as_ref() {
-            StarknetProviderError::StarknetError(
-                StarknetError::ContractNotFound | StarknetError::ClassHashNotFound,
-            ) => Ok(None),
-            _ => Err(BackendError::StarknetProvider(err_in_arc)),
+        Err(BackendError::StarknetProvider(err)) => match err.as_ref() {
+            StarknetProviderError::StarknetError(StarknetError::ContractNotFound) => Ok(None),
+            StarknetProviderError::StarknetError(StarknetError::ClassHashNotFound) => Ok(None),
+            _ => Err(BackendClientError::BackendError(BackendError::StarknetProvider(err))),
         },
 
-        Err(e) => Err(e),
+        Err(err) => Err(BackendClientError::BackendError(err)),
     }
 }
 
@@ -703,7 +540,7 @@ pub(crate) mod test_utils {
 
     use super::*;
 
-    pub fn create_forked_backend(rpc_url: &str, block_num: BlockNumber) -> BackendHandle {
+    pub fn create_forked_backend(rpc_url: &str, block_num: BlockNumber) -> BackendClient {
         let url = Url::parse(rpc_url).expect("valid url");
         let provider = Arc::new(JsonRpcClient::new(HttpTransport::new(url)));
         Backend::new(provider, block_num.into()).unwrap()
@@ -774,19 +611,10 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use katana_primitives::contract::GenericContractInfo;
     use starknet::macros::felt;
 
     use super::test_utils::*;
     use super::*;
-
-    const LOCAL_RPC_URL: &str = "http://localhost:5050";
-
-    const STORAGE_KEY: StorageKey = felt!("0x1");
-    const ADDR_1: ContractAddress = ContractAddress(felt!("0xADD1"));
-    const ADDR_1_NONCE: Nonce = felt!("0x1");
-    const ADDR_1_STORAGE_VALUE: StorageKey = felt!("0x8080");
-    const ADDR_1_CLASS_HASH: StorageKey = felt!("0x1");
 
     const ERROR_SEND_REQUEST: &str = "Failed to send request to backend";
     const ERROR_STATS: &str = "Failed to get stats";
@@ -1146,37 +974,6 @@ mod tests {
     }
 
     #[test]
-    fn get_from_cache_if_exist() {
-        // setup
-        let backend = create_forked_backend(LOCAL_RPC_URL, 1);
-        let state_db = CacheStateDb::new(backend);
-
-        state_db
-            .storage
-            .write()
-            .entry(ADDR_1)
-            .or_default()
-            .insert(STORAGE_KEY, ADDR_1_STORAGE_VALUE);
-
-        state_db.contract_state.write().insert(
-            ADDR_1,
-            GenericContractInfo { nonce: ADDR_1_NONCE, class_hash: ADDR_1_CLASS_HASH },
-        );
-
-        let provider = SharedStateProvider(Arc::new(state_db));
-
-        assert_eq!(StateProvider::nonce(&provider, ADDR_1).unwrap(), Some(ADDR_1_NONCE));
-        assert_eq!(
-            StateProvider::storage(&provider, ADDR_1, STORAGE_KEY).unwrap(),
-            Some(ADDR_1_STORAGE_VALUE)
-        );
-        assert_eq!(
-            StateProvider::class_hash_of_contract(&provider, ADDR_1).unwrap(),
-            Some(ADDR_1_CLASS_HASH)
-        );
-    }
-
-    #[test]
     fn test_deduplicated_request_should_return_similar_results() {
         // Start mock server with a predefined nonce response
         let response = r#"{"jsonrpc":"2.0","result":"0x123","id":1}"#;
@@ -1186,8 +983,8 @@ mod tests {
         let addr = ContractAddress(felt!("0x1"));
 
         // Collect results from multiple identical nonce requests
-        let results: Arc<Mutex<Vec<Result<Nonce, BackendError>>>> =
-            Arc::new(Mutex::new(Vec::new()));
+        let results: Arc<Mutex<Vec<_>>> = Arc::new(Mutex::new(Vec::new()));
+
         let handles: Vec<_> = (0..5)
             .map(|_| {
                 let h = handle.clone();
@@ -1217,64 +1014,9 @@ mod tests {
         for result in results.iter() {
             assert_eq!(
                 "0x123",
-                format!("{:#x}", result.as_ref().unwrap()),
+                format!("{:#x?}", result.as_ref().unwrap()),
                 "All deduplicated nonce requests should return the same result"
             );
         }
-    }
-
-    // TODO: unignore this once we have separate the spawning of the backend thread from the backend
-    // creation
-    #[test]
-    #[ignore]
-    fn fetch_from_fork_will_err_if_backend_thread_not_running() {
-        let backend = create_forked_backend(LOCAL_RPC_URL, 1);
-        let provider = SharedStateProvider(Arc::new(CacheStateDb::new(backend)));
-        assert!(StateProvider::nonce(&provider, ADDR_1).is_err())
-    }
-
-    const FORKED_URL: &str =
-        "https://starknet-goerli.infura.io/v3/369ce5ac40614952af936e4d64e40474";
-
-    const GOERLI_CONTRACT_ADDR: ContractAddress = ContractAddress(felt!(
-        "0x02b92ec12cA1e308f320e99364d4dd8fcc9efDAc574F836C8908de937C289974"
-    ));
-    const GOERLI_CONTRACT_STORAGE_KEY: StorageKey =
-        felt!("0x3b459c3fadecdb1a501f2fdeec06fd735cb2d93ea59779177a0981660a85352");
-
-    #[test]
-    #[ignore]
-    fn fetch_from_fork_if_not_in_cache() {
-        let backend = create_forked_backend(FORKED_URL, 908622);
-        let provider = SharedStateProvider(Arc::new(CacheStateDb::new(backend)));
-
-        // fetch from remote
-
-        let class_hash =
-            StateProvider::class_hash_of_contract(&provider, GOERLI_CONTRACT_ADDR).unwrap();
-        let storage_value =
-            StateProvider::storage(&provider, GOERLI_CONTRACT_ADDR, GOERLI_CONTRACT_STORAGE_KEY)
-                .unwrap();
-        let nonce = StateProvider::nonce(&provider, GOERLI_CONTRACT_ADDR).unwrap();
-
-        // fetch from cache
-
-        let class_hash_in_cache =
-            provider.0.contract_state.read().get(&GOERLI_CONTRACT_ADDR).map(|i| i.class_hash);
-        let storage_value_in_cache = provider
-            .0
-            .storage
-            .read()
-            .get(&GOERLI_CONTRACT_ADDR)
-            .and_then(|s| s.get(&GOERLI_CONTRACT_STORAGE_KEY))
-            .copied();
-        let nonce_in_cache =
-            provider.0.contract_state.read().get(&GOERLI_CONTRACT_ADDR).map(|i| i.nonce);
-
-        // check
-
-        assert_eq!(nonce, nonce_in_cache, "value must be stored in cache");
-        assert_eq!(class_hash, class_hash_in_cache, "value must be stored in cache");
-        assert_eq!(storage_value, storage_value_in_cache, "value must be stored in cache");
     }
 }

@@ -96,6 +96,12 @@ pub enum ProviderError {
         storage_key: StorageKey,
     },
 
+    #[error("Missing class hash for contract {address}")]
+    MissingContractClassHash { address: ContractAddress },
+
+    #[error("Missing nonce for contract {address}")]
+    MissingContractNonce { address: ContractAddress },
+
     #[error("State proof not supported")]
     StateProofNotSupported,
 
@@ -109,11 +115,9 @@ pub enum ProviderError {
     #[error(transparent)]
     Database(#[from] DatabaseError),
 
-    /// Error returned by a [ForkedBackend](crate::providers::fork::backend::ForkedBackend) used by
-    /// [ForkedProvider](crate::providers::fork::ForkedProvider).
     #[cfg(feature = "fork")]
     #[error(transparent)]
-    ForkedBackend(#[from] crate::providers::fork::backend::BackendError),
+    ForkedBackend1(#[from] katana_fork::BackendClientError),
 
     /// Any error that is not covered by the other variants.
     #[error("Something went wrong: {0}")]

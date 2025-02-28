@@ -71,7 +71,7 @@ impl<Db: Database> StateWriter for DbProvider<Db> {
     }
 }
 
-impl ContractClassWriter for DbProvider {
+impl<Db: Database> ContractClassWriter for DbProvider<Db> {
     fn set_class(&self, hash: ClassHash, class: ContractClass) -> ProviderResult<()> {
         self.0.update(move |db_tx| -> ProviderResult<()> {
             db_tx.put::<tables::Classes>(hash, class)?;
@@ -93,11 +93,16 @@ impl ContractClassWriter for DbProvider {
 
 /// A state provider that provides the latest states from the database.
 #[derive(Debug)]
-pub(super) struct LatestStateProvider<Tx: DbTx>(Tx);
+pub(crate) struct LatestStateProvider<Tx: DbTx>(Tx);
 
 impl<Tx: DbTx> LatestStateProvider<Tx> {
     pub fn new(tx: Tx) -> Self {
         Self(tx)
+    }
+
+    /// Returns a reference to the underlying transaction.
+    pub fn tx(&self) -> &Tx {
+        &self.0
     }
 }
 
@@ -201,16 +206,25 @@ where
 
 /// A historical state provider.
 #[derive(Debug)]
-pub(super) struct HistoricalStateProvider<Tx: DbTx + fmt::Debug> {
+pub(crate) struct HistoricalStateProvider<Tx: DbTx> {
     /// The database transaction used to read the database.
     tx: Tx,
     /// The block number of the state.
-    block_number: u64,
+    block_number: BlockNumber,
 }
 
-impl<Tx: DbTx + fmt::Debug> HistoricalStateProvider<Tx> {
-    pub fn new(tx: Tx, block_number: u64) -> Self {
+impl<Tx: DbTx> HistoricalStateProvider<Tx> {
+    pub fn new(tx: Tx, block_number: BlockNumber) -> Self {
         Self { tx, block_number }
+    }
+
+    pub fn tx(&self) -> &Tx {
+        &self.tx
+    }
+
+    /// The block number this state provider is pinned to.
+    pub fn block(&self) -> BlockNumber {
+        self.block_number
     }
 
     /// Check if the class was declared before the pinned block number.
@@ -223,7 +237,7 @@ impl<Tx: DbTx + fmt::Debug> HistoricalStateProvider<Tx> {
 
 impl<Tx> ContractClassProvider for HistoricalStateProvider<Tx>
 where
-    Tx: DbTx + fmt::Debug + Send + Sync,
+    Tx: DbTx + Send + Sync,
 {
     fn class(&self, hash: ClassHash) -> ProviderResult<Option<ContractClass>> {
         if self.is_class_declared_before_block(hash)? {
