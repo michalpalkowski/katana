@@ -21,12 +21,7 @@ For Debian/Ubuntu:
 sudo apt-get install llvm-19 llvm-19-dev llvm-19-runtime clang-19 clang-tools-19 lld-19 libpolly-19-dev libmlir-19-dev mlir-19-tools
 ```
 
-You can automatically set environment variables by sourcing `cairo-native.env.sh`:
-```bash
-source cairo-native.env.sh
-```
-
-Alternatively, manually set them:
+You can set the needed environment variables by:
 
 ```bash
 # For Debian/Ubuntu using the repository, the path will be /usr/lib/llvm-19

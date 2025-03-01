@@ -8,6 +8,7 @@ usage:
 	@echo "Usage:"
 	@echo "    prepare-snos-test:         Prepare the tests environment."
 	@echo "    extract-test-db:           Extract the test database file."
+	@echo "    native-deps-macos:         Install cairo-native dependencies for macOS."
 
 .PHONY: prepare-snos-test
 prepare-snos-test: extract-test-db
@@ -20,3 +21,18 @@ prepare-snos-test: extract-test-db
 extract-test-db:
 	cd tests/fixtures && \
 		tar -xzf katana_db.tar.gz
+
+.PHONY: check-llvm
+check-llvm:
+ifndef MLIR_SYS_190_PREFIX
+	$(error Could not find a suitable LLVM 19 toolchain (mlir), please set MLIR_SYS_190_PREFIX env pointing to the LLVM 19 dir)
+endif
+ifndef TABLEGEN_190_PREFIX
+	$(error Could not find a suitable LLVM 19 toolchain (tablegen), please set TABLEGEN_190_PREFIX env pointing to the LLVM 19 dir)
+endif
+	@echo "LLVM is correctly set at $(MLIR_SYS_190_PREFIX)."
+
+.PHONY: native-deps-macos
+native-deps-macos:
+	-brew install llvm@19 --quiet
+	@echo "Run  \`source scripts/cairo-native.env.sh\` to setup the needed environment variables for cairo-native."
