@@ -77,7 +77,7 @@ pub mod json {
     use super::*;
 
     const CONTROLLER_SIERRA_ARTIFACT: &str =
-        include_str!("../../contracts/build/controller_CartridgeAccount.contract_class.json");
+        include_str!("../../../contracts/build/controller_CartridgeAccount.contract_class.json");
     const CONTROLLER_CLASS_NAME: &str = "controller";
 
     // TODO(kariy): should accept the whole account struct instead of individual fields

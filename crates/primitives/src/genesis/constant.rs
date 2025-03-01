@@ -82,23 +82,23 @@ pub const CONTROLLER_CLASS_HASH: ClassHash =
 lazy_static! {
 
     // Default fee token contract
-    pub static ref DEFAULT_LEGACY_ERC20_CLASS: ContractClass = read_legacy_class_artifact(include_str!("../../../contracts/build/erc20.json"));
+    pub static ref DEFAULT_LEGACY_ERC20_CLASS: ContractClass = read_legacy_class_artifact(include_str!("../../../../contracts/build/erc20.json"));
 
     // Default universal deployer
-    pub static ref DEFAULT_LEGACY_UDC_CLASS: ContractClass = read_legacy_class_artifact(include_str!("../../../contracts/build/universal_deployer.json"));
+    pub static ref DEFAULT_LEGACY_UDC_CLASS: ContractClass = read_legacy_class_artifact(include_str!("../../../../contracts/build/universal_deployer.json"));
 
     // Default account contract
-    pub static ref DEFAULT_ACCOUNT_CLASS: ContractClass = parse_sierra_class(include_str!("../../../contracts/build/default_account.json")).unwrap();
-    pub static ref DEFAULT_ACCOUNT_CLASS_CASM: CompiledClass = read_compiled_class_artifact(include_str!("../../../contracts/build/default_account.json"));
+    pub static ref DEFAULT_ACCOUNT_CLASS: ContractClass = parse_sierra_class(include_str!("../../../../contracts/build/default_account.json")).unwrap();
+    pub static ref DEFAULT_ACCOUNT_CLASS_CASM: CompiledClass = read_compiled_class_artifact(include_str!("../../../../contracts/build/default_account.json"));
 
     // Genesis account class
-    pub static ref GENESIS_ACCOUNT_CLASS: ContractClass = read_legacy_class_artifact(include_str!("../../../contracts/build/account.json"));
+    pub static ref GENESIS_ACCOUNT_CLASS: ContractClass = read_legacy_class_artifact(include_str!("../../../../contracts/build/account.json"));
 }
 
 #[cfg(feature = "controller")]
 lazy_static! {
     // Cartridge Controller account
-    pub static ref CONTROLLER_ACCOUNT_CLASS: ContractClass = parse_sierra_class(include_str!("../../../contracts/build/controller_CartridgeAccount.contract_class.json")).unwrap();
+    pub static ref CONTROLLER_ACCOUNT_CLASS: ContractClass = parse_sierra_class(include_str!("../../../../contracts/build/controller_CartridgeAccount.contract_class.json")).unwrap();
 }
 
 /// A helper function to get the base storage address for the fee token balance of a given account.

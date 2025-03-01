@@ -26,7 +26,7 @@ sol! {
     #[sol(rpc, rename_all = "snakecase")]
     #[derive(serde::Serialize, serde::Deserialize)]
     StarknetMessagingLocal,
-    "../contracts/messaging/solidity/IStarknetMessagingLocal_ABI.json"
+    "../../contracts/messaging/solidity/IStarknetMessagingLocal_ABI.json"
 }
 
 sol! {

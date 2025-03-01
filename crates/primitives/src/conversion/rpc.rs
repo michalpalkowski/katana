@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn legacy_rpc_to_inner_and_back() {
-        let json = include_str!("../../../contracts/build/account.json");
+        let json = include_str!("../../../../contracts/build/account.json");
         let json = serde_json::from_str(json).unwrap();
         let class: LegacyContractClass = parse_deprecated_compiled_class(json).unwrap();
 
