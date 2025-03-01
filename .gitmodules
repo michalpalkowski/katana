@@ -4,3 +4,7 @@
 [submodule "crates/contracts/piltover"]
 	path = crates/contracts/piltover
 	url = https://github.com/keep-starknet-strange/piltover.git
+[submodule "tests/snos/snos"]
+	path = tests/snos/snos
+	url = https://github.com/cartridge-gg/snos
+	branch = kariy/0.13.4
