@@ -23,13 +23,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: fmt
-    container:
-      image: ghcr.io/dojoengine/dojo-dev:v1.2.2
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo build -r --bin katana
@@ -63,7 +64,7 @@ jobs:
           kill $KATANA_PID
 
   test:
-    needs: ensure-docker
+    needs: build
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/dojoengine/dojo-dev:v1.2.2
