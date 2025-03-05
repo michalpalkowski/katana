@@ -23,6 +23,10 @@ RUN apt-get install -y \
 	libmlir-19-dev \
 	mlir-19-tools
 
+# Install bun for Explorer
+RUN apt-get install -y unzip
+RUN curl -fsSL https://bun.sh/install | bash
+
 ENV PYENV_ROOT="/root/.pyenv"
 ENV PATH="/root/.pyenv/bin:$PATH"
 RUN curl -fsSL https://pyenv.run | bash
