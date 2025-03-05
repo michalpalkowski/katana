@@ -1,33 +1,47 @@
-# Environment detection.
-
+# Environment detection and variable definitions
 UNAME := $(shell uname)
 
-# Usage is the default target for newcomers running `make`.
-.PHONY: usage
-usage:
+SNOS_OUTPUT ?= tests/snos/snos/build/
+FIXTURES_DIR ?= tests/fixtures
+TEST_DB_TAR ?= $(FIXTURES_DIR)/katana_db.tar.gz
+KATANA_DB_DIR := $(FIXTURES_DIR)/katana_db
+
+.DEFAULT_GOAL := usage
+.SILENT: clean
+.PHONY: usage help check-llvm native-deps native-deps-macos native-deps-linux clean
+
+# Virtual targets that map to actual file outputs
+.PHONY: test-artifacts snos-artifacts extract-test-db
+
+usage help:
 	@echo "Usage:"
 	@echo "    test-artifacts:            Prepare tests artifacts."
 	@echo "    snos-artifacts:            Prepare SNOS tests artifacts."
 	@echo "    extract-test-db:           Extract the test database file."
 	@echo "    native-deps-macos:         Install cairo-native dependencies for macOS."
 	@echo "    native-deps-linux:         Install cairo-native dependencies for Linux."
+	@echo "    check-llvm:                Check if LLVM is properly configured."
+	@echo "    clean:                     Clean up generated files and artifacts."
+	@echo "    help:                      Show this help message."
 
-.PHONY: snos-artifacts
-snos-artifacts: extract-test-db
-	git submodule update --init --recursive
-	cd tests/snos/snos && \
+snos-artifacts: $(SNOS_OUTPUT)
+extract-test-db: $(KATANA_DB_DIR)
+test-artifacts: $(SNOS_OUTPUT)
+
+$(SNOS_OUTPUT): $(KATANA_DB_DIR)
+	@echo "Initializing submodules..."
+	@git submodule update --init --recursive
+	@echo "Setting up SNOS tests..."
+	@cd tests/snos/snos && \
 		. ./setup-scripts/setup-cairo.sh && \
-		. ./setup-scripts/setup-tests.sh
+		. ./setup-scripts/setup-tests.sh || { echo "SNOS setup failed\!"; exit 1; }
 
-.PHONY: test-artifacts
-test-artifacts: snos-artifacts
+$(KATANA_DB_DIR): $(TEST_DB_TAR)
+	@echo "Extracting test database..."
+	@cd $(FIXTURES_DIR) && \
+		tar -xzf katana_db.tar.gz || { echo "Failed to extract test database\!"; exit 1; }
+	@echo "Test database extracted successfully."
 
-.PHONY: extract-test-db
-extract-test-db:
-	cd tests/fixtures && \
-		tar -xzf katana_db.tar.gz
-
-.PHONY: check-llvm
 check-llvm:
 ifndef MLIR_SYS_190_PREFIX
 	$(error Could not find a suitable LLVM 19 toolchain (mlir), please set MLIR_SYS_190_PREFIX env pointing to the LLVM 19 dir)
@@ -37,7 +51,6 @@ ifndef TABLEGEN_190_PREFIX
 endif
 	@echo "LLVM is correctly set at $(MLIR_SYS_190_PREFIX)."
 
-.PHONY: native-deps
 native-deps:
 ifeq ($(UNAME), Darwin)
 native-deps: native-deps-macos
@@ -46,10 +59,17 @@ native-deps: native-deps-linux
 endif
 	@echo "Run  \`source scripts/cairo-native.env.sh\` to setup the needed environment variables for cairo-native."
 
-.PHONY: native-deps-macos
 native-deps-macos:
+	@echo "Installing LLVM dependencies for macOS..."
 	-brew install llvm@19 --quiet
+	@echo "macOS dependencies installed successfully."
 
-.PHONY: native-deps-linux
 native-deps-linux:
-	sudo apt-get install llvm-19 llvm-19-dev llvm-19-runtime clang-19 clang-tools-19 lld-19 libpolly-19-dev libmlir-19-dev mlir-19-tools
+	@echo "Installing LLVM dependencies for Linux..."
+	sudo apt-get install -y llvm-19 llvm-19-dev llvm-19-runtime clang-19 clang-tools-19 lld-19 libpolly-19-dev libmlir-19-dev mlir-19-tools
+	@echo "Linux dependencies installed successfully."
+
+clean:
+	echo "Cleaning up generated files..."
+	-rm -rf $(KATANA_DB_DIR) $(SNOS_OUTPUT)
+	echo "Clean complete."
