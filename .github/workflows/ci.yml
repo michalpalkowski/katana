@@ -14,49 +14,83 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/dojoengine/dojo-dev:v1.2.2
+      image: ghcr.io/dojoengine/katana-runner:latest
     steps:
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
       - run: scripts/rust_fmt.sh --check
 
-  test:
+  clippy:
     needs: fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-4-cores
     container:
-      image: ghcr.io/dojoengine/dojo-dev:v1.2.2
+      image: ghcr.io/dojoengine/katana-runner:latest
     env:
       MLIR_SYS_190_PREFIX: /usr/lib/llvm-19/
       LLVM_SYS_191_PREFIX: /usr/lib/llvm-19/
       TABLEGEN_190_PREFIX: /usr/lib/llvm-19/
     steps:
       - uses: actions/checkout@v3
-      - uses: Swatinem/rust-cache@v2
-      - name: Add LLVM deb repository
-        uses: myci-actions/add-deb-repo@11
         with:
-          repo-name: llvm-repo
-          keys-asc: https://apt.llvm.org/llvm-snapshot.gpg.key
-          repo: deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main
-      - run: sudo apt-get update && sudo apt-get upgrade -y
-      - name: Install Cairo native dependencies
+          submodules: recursive
+      # Workaround for https://github.com/actions/runner-images/issues/6775
+      - run: git config --global --add safe.directory "*"
+
+      - name: Run Clippy
         run: |
-          make native-deps
-      - run: |
-          cargo llvm-cov nextest --no-report --all-features --workspace
+          make test-artifacts
+          ./scripts/clippy.sh
+
+  test:
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest-32-cores
+    container:
+      image: ghcr.io/dojoengine/katana-runner:latest
+    env:
+      MLIR_SYS_190_PREFIX: /usr/lib/llvm-19/
+      LLVM_SYS_191_PREFIX: /usr/lib/llvm-19/
+      TABLEGEN_190_PREFIX: /usr/lib/llvm-19/
+      NEXTEST_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v3
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build Katana binary
+        run: |
+          cargo build --release --bin katana
+          echo "$PWD/target/release" >> $GITHUB_PATH
+
+      - name: Run tests
+        run: |
+          cargo llvm-cov nextest --no-report --all-features --workspace --exclude snos-integration-test --build-jobs 20
           cargo llvm-cov report --lcov --output-path lcov.info
+
       - uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
 
   snos-integration-test:
-    needs: test
-    runs-on: ubuntu-latest
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest-32-cores
     container:
-      image: ghcr.io/dojoengine/dojo-dev:v1.2.2
+      image: ghcr.io/dojoengine/katana-runner:latest
+    env:
+      MLIR_SYS_190_PREFIX: /usr/lib/llvm-19/
+      LLVM_SYS_191_PREFIX: /usr/lib/llvm-19/
+      TABLEGEN_190_PREFIX: /usr/lib/llvm-19/
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      # Workaround for https://github.com/actions/runner-images/issues/6775
+      - run: git config --global --add safe.directory "*"
+
       - uses: Swatinem/rust-cache@v2
+
+      - name: Prepare SNOS test environment
+        run: |
+          make snos-artifacts
+
       - run: |
           cargo run -p snos-integration-test

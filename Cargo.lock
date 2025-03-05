@@ -1877,6 +1877,51 @@ dependencies = [
  "cairo-lang-casm",
  "cairo-lang-runner",
  "cairo-lang-starknet-classes",
+ "cairo-vm 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "derive_more 0.99.19",
+ "indexmap 2.7.1",
+ "itertools 0.12.1",
+ "keccak",
+ "log",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "papyrus_config 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "paste",
+ "phf",
+ "rand 0.8.5",
+ "rstest 0.17.0",
+ "rstest_reuse 0.7.0",
+ "semver 1.0.25",
+ "serde",
+ "serde_json",
+ "sha2",
+ "starknet-types-core",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "starknet_sierra_multicompile 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "strum 0.25.0",
+ "strum_macros 0.25.3",
+ "tempfile",
+ "thiserror 1.0.69",
+ "toml",
+]
+
+[[package]]
+name = "blockifier"
+version = "0.14.0-rc.1"
+source = "git+https://github.com/dojoengine/sequencer?rev=58aacaf4#58aacaf4a623cd89d609d29f056ba1ac3837f1b5"
+dependencies = [
+ "anyhow",
+ "ark-ec 0.4.2",
+ "ark-ff 0.4.2",
+ "ark-secp256k1 0.4.0",
+ "ark-secp256r1 0.4.0",
+ "cached",
+ "cairo-lang-casm",
+ "cairo-lang-runner",
+ "cairo-lang-starknet-classes",
  "cairo-native",
  "cairo-vm 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more 0.99.19",
@@ -1888,7 +1933,7 @@ dependencies = [
  "num-integer",
  "num-rational",
  "num-traits",
- "papyrus_config",
+ "papyrus_config 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "paste",
  "phf",
  "rand 0.8.5",
@@ -1899,9 +1944,9 @@ dependencies = [
  "serde_json",
  "sha2",
  "starknet-types-core",
- "starknet_api",
- "starknet_infra_utils",
- "starknet_sierra_multicompile",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
+ "starknet_sierra_multicompile 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "strum 0.25.0",
  "strum_macros 0.25.3",
  "tempfile",
@@ -5971,7 +6016,7 @@ version = "1.2.2"
 dependencies = [
  "alloy-primitives",
  "anyhow",
- "blockifier",
+ "blockifier 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "cairo-native",
  "cairo-vm 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "criterion",
@@ -5990,7 +6035,7 @@ dependencies = [
  "serde_json",
  "similar-asserts",
  "starknet 0.12.0",
- "starknet_api",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -6186,7 +6231,7 @@ dependencies = [
  "starknet 0.12.0",
  "starknet-crypto 0.7.4",
  "starknet-types-core",
- "starknet_api",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "strum 0.25.0",
  "strum_macros 0.25.3",
  "thiserror 1.0.69",
@@ -6307,7 +6352,7 @@ dependencies = [
  "serde_with 3.12.0",
  "similar-asserts",
  "starknet 0.12.0",
- "starknet_api",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "thiserror 1.0.69",
 ]
 
@@ -7305,7 +7350,23 @@ dependencies = [
  "itertools 0.12.1",
  "serde",
  "serde_json",
- "starknet_infra_utils",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "strum_macros 0.25.3",
+ "thiserror 1.0.69",
+ "tracing",
+ "validator",
+]
+
+[[package]]
+name = "papyrus_config"
+version = "0.14.0-rc.1"
+source = "git+https://github.com/dojoengine/sequencer?rev=58aacaf4#58aacaf4a623cd89d609d29f056ba1ac3837f1b5"
+dependencies = [
+ "clap",
+ "itertools 0.12.1",
+ "serde",
+ "serde_json",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "strum_macros 0.25.3",
  "thiserror 1.0.69",
  "tracing",
@@ -7957,7 +8018,7 @@ version = "0.1.0"
 source = "git+https://github.com/cartridge-gg/snos?rev=798ec19#798ec19bf6e5633c8ee414c157675deeefca32fc"
 dependencies = [
  "anyhow",
- "blockifier",
+ "blockifier 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "cairo-lang-starknet-classes",
  "cairo-lang-utils",
  "cairo-vm 1.0.2 (git+https://github.com/kariy/cairo-vm?branch=kariy%2F1.0.2_clear-cell)",
@@ -7979,7 +8040,7 @@ dependencies = [
  "starknet-os",
  "starknet-os-types",
  "starknet-types-core",
- "starknet_api",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -8570,14 +8631,14 @@ name = "rpc-replay"
 version = "0.1.0"
 source = "git+https://github.com/cartridge-gg/snos?rev=798ec19#798ec19bf6e5633c8ee414c157675deeefca32fc"
 dependencies = [
- "blockifier",
+ "blockifier 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "cairo-lang-starknet-classes",
  "rpc-client",
  "serde",
  "serde_json",
  "starknet 0.11.0",
  "starknet-os-types",
- "starknet_api",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -9885,7 +9946,7 @@ dependencies = [
  "ark-secp256r1 0.4.0",
  "base64 0.21.7",
  "bitvec",
- "blockifier",
+ "blockifier 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "c-kzg",
  "cairo-lang-casm",
  "cairo-lang-starknet",
@@ -9916,7 +9977,7 @@ dependencies = [
  "starknet-gateway-types",
  "starknet-os-types",
  "starknet-types-core",
- "starknet_api",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "thiserror 1.0.69",
  "tokio",
  "uuid 1.15.1",
@@ -9928,7 +9989,7 @@ name = "starknet-os-types"
 version = "0.1.0"
 source = "git+https://github.com/cartridge-gg/snos?rev=798ec19#798ec19bf6e5633c8ee414c157675deeefca32fc"
 dependencies = [
- "blockifier",
+ "blockifier 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "cairo-lang-starknet-classes",
  "cairo-vm 1.0.2 (git+https://github.com/kariy/cairo-vm?branch=kariy%2F1.0.2_clear-cell)",
  "flate2",
@@ -9941,7 +10002,7 @@ dependencies = [
  "starknet-crypto 0.7.4",
  "starknet-gateway-types",
  "starknet-types-core",
- "starknet_api",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -10061,7 +10122,35 @@ dependencies = [
  "sha3",
  "starknet-crypto 0.7.4",
  "starknet-types-core",
- "starknet_infra_utils",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "strum 0.25.0",
+ "strum_macros 0.25.3",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "starknet_api"
+version = "0.14.0-rc.1"
+source = "git+https://github.com/dojoengine/sequencer?rev=58aacaf4#58aacaf4a623cd89d609d29f056ba1ac3837f1b5"
+dependencies = [
+ "bitvec",
+ "cairo-lang-runner",
+ "cairo-lang-starknet-classes",
+ "derive_more 0.99.19",
+ "hex",
+ "indexmap 2.7.1",
+ "itertools 0.12.1",
+ "num-bigint",
+ "num-traits",
+ "pretty_assertions",
+ "primitive-types",
+ "semver 1.0.25",
+ "serde",
+ "serde_json",
+ "sha3",
+ "starknet-crypto 0.7.4",
+ "starknet-types-core",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "strum 0.25.0",
  "strum_macros 0.25.3",
  "thiserror 1.0.69",
@@ -10077,6 +10166,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "starknet_infra_utils"
+version = "0.14.0-rc.1"
+source = "git+https://github.com/dojoengine/sequencer?rev=58aacaf4#58aacaf4a623cd89d609d29f056ba1ac3837f1b5"
+dependencies = [
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "starknet_sierra_multicompile"
 version = "0.14.0-rc.1"
 source = "git+https://github.com/dojoengine/sequencer?rev=03bfb736#03bfb736f8faf993a751e2f76fadee69eb779bcf"
@@ -10084,14 +10182,34 @@ dependencies = [
  "cairo-lang-sierra",
  "cairo-lang-starknet-classes",
  "cairo-lang-utils",
- "cairo-native",
- "papyrus_config",
+ "papyrus_config 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
  "rlimit",
  "serde",
  "serde_json",
  "starknet-types-core",
- "starknet_api",
- "starknet_infra_utils",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=03bfb736)",
+ "tempfile",
+ "thiserror 1.0.69",
+ "validator",
+]
+
+[[package]]
+name = "starknet_sierra_multicompile"
+version = "0.14.0-rc.1"
+source = "git+https://github.com/dojoengine/sequencer?rev=58aacaf4#58aacaf4a623cd89d609d29f056ba1ac3837f1b5"
+dependencies = [
+ "cairo-lang-sierra",
+ "cairo-lang-starknet-classes",
+ "cairo-lang-utils",
+ "cairo-native",
+ "papyrus_config 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
+ "rlimit",
+ "serde",
+ "serde_json",
+ "starknet-types-core",
+ "starknet_api 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
+ "starknet_infra_utils 0.14.0-rc.1 (git+https://github.com/dojoengine/sequencer?rev=58aacaf4)",
  "tempfile",
  "thiserror 1.0.69",
  "validator",
