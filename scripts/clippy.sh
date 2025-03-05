@@ -11,8 +11,5 @@ run_clippy() {
   cargo +nightly-2024-08-28 clippy --all-targets "$@" -- -D warnings -D future-incompatible -D nonstandard-style -D rust-2018-idioms -D unused -D missing-debug-implementations
 }
 
-run_clippy -p katana
-run_clippy -p katana-executor --all
-
 source ./scripts/cairo-native.env.sh
-run_clippy -p katana --features native
+run_clippy -p katana --all-features
