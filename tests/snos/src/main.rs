@@ -48,8 +48,11 @@ async fn run_snos(block: BlockNumber, rpc_url: &str) -> Result<()> {
 }
 
 async fn node() -> LaunchedNode {
-    const TEST_CHAIN_CONFIG: &str = "../../fixtures/test-chain";
-    const TEST_DB_DIR: &str = "../../fixtures/katana_db";
+    // These paths only work if you run from the root of the repository:
+    //
+    // cargo run -p snos-integration-tests
+    const TEST_CHAIN_CONFIG: &str = "tests/fixtures/test-chain";
+    const TEST_DB_DIR: &str = "tests/fixtures/katana_db";
 
     let config_dir = ChainConfigDir::open(TEST_CHAIN_CONFIG).unwrap();
     let mut chain = rollup::read(&config_dir).expect("failed to read chain config");
