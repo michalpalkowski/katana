@@ -46,30 +46,3 @@ jobs:
             DOJO_VERSION=1.2.2
           platforms: linux/amd64,linux/arm64
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}-runner:latest
-
-  propose-update-pr:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'release' && startsWith(github.ref, 'refs/tags/'))
-    permissions:
-      pull-requests: write
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Update github action devcontainers
-        run: |
-          for file in .github/workflows/*.yml; do
-            sed -i "s|ghcr.io/dojoengine/katana-runner:[a-zA-Z0-9._-]*|ghcr.io/dojoengine/katana-runner:${{ needs.build-and-push.outputs.tag_name }}|" "$file"
-          done
-
-      - uses: peter-evans/create-pull-request@v5
-        with:
-          # We have to use a PAT in order to trigger ci
-          token: ${{ secrets.CREATE_PR_TOKEN }}
-          title: "build(ci): update actions runner image: ${{ needs.build-and-push.outputs.tag_name }}"
-          commit-message: "Update CI runner image: ${{ needs.build-and-push.outputs.tag_name }}"
-          branch: bump-runner-image
-          base: main
-          delete-branch: true

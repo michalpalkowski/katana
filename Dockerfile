@@ -5,11 +5,6 @@ ENV MLIR_SYS_190_PREFIX=/usr/lib/llvm-19
 ENV	LLVM_SYS_191_PREFIX=/usr/lib/llvm-19
 ENV TABLEGEN_190_PREFIX=/usr/lib/llvm-19
 
-# Add LLVM 19 repository
-RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
-	&& echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" >> /etc/apt/sources.list.d/llvm-19.list \
-	&& apt-get update
-
 # Install LLVM and Cairo native dependencies
 RUN apt-get install -y \
 	llvm-19 \
