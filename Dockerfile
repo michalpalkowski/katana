@@ -1,5 +1,10 @@
 FROM ghcr.io/dojoengine/dojo-dev:v1.2.2
 
+# Install Katana's Rust version
+ARG RUST_VERSION=1.83.0
+RUN rustup toolchain install ${RUST_VERSION} --profile minimal && \
+	rustup default ${RUST_VERSION}
+
 # Set environment variables for LLVM
 ENV MLIR_SYS_190_PREFIX=/usr/lib/llvm-19
 ENV	LLVM_SYS_191_PREFIX=/usr/lib/llvm-19
