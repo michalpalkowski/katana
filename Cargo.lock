@@ -6122,7 +6122,7 @@ dependencies = [
 
 [[package]]
 name = "katana-log"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "clap",
  "serde",
