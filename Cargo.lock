@@ -5924,6 +5924,7 @@ dependencies = [
  "dojo-utils",
  "katana-chain-spec",
  "katana-core",
+ "katana-log",
  "katana-messaging",
  "katana-node",
  "katana-primitives",
@@ -5936,8 +5937,6 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-log 0.1.4",
- "tracing-subscriber",
  "url",
 ]
 
@@ -6119,6 +6118,18 @@ version = "1.2.3"
 dependencies = [
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "katana-log"
+version = "1.2.2"
+dependencies = [
+ "clap",
+ "serde",
+ "thiserror 1.0.69",
+ "tracing",
+ "tracing-log 0.1.4",
+ "tracing-subscriber",
 ]
 
 [[package]]

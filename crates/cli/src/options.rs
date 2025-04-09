@@ -12,6 +12,7 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 
 use clap::Args;
+use katana_log::LogFormat;
 use katana_node::config::execution::{DEFAULT_INVOCATION_MAX_STEPS, DEFAULT_VALIDATION_MAX_STEPS};
 #[cfg(feature = "server")]
 use katana_node::config::metrics::{DEFAULT_METRICS_ADDR, DEFAULT_METRICS_PORT};
@@ -31,7 +32,7 @@ use url::Url;
 
 #[cfg(feature = "server")]
 use crate::utils::{deserialize_cors_origins, serialize_cors_origins};
-use crate::utils::{parse_block_hash_or_number, parse_genesis, LogFormat};
+use crate::utils::{parse_block_hash_or_number, parse_genesis};
 
 const DEFAULT_DEV_SEED: &str = "0";
 const DEFAULT_DEV_ACCOUNTS: u16 = 10;
