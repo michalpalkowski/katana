@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use axum::body::Body;
 use axum::http::{HeaderValue, Response};
 use http::{Request, StatusCode};
