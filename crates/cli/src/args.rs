@@ -134,18 +134,6 @@ impl NodeArgs {
             utils::print_intro(self, &node.backend().chain_spec);
         }
 
-        if self.explorer.explorer {
-            // let rpc_url = format!("http://{}", handle.rpc().addr());
-            // let rpc_url = Url::parse(&rpc_url).context("failed to parse node url")?;
-            // let addr = SocketAddr::new(self.explorer.explorer_addr, self.explorer.explorer_port);
-            // let _ = Explorer::new(rpc_url, chain_id)?.start(addr).await?;
-
-            // Get chain ID before launching the node
-            // let chain_id = node.backend().chain_spec.id().to_string();
-            // node.rpc_server.module.merge(Explorer::new_embedded(chain_id)?)?;
-            // println!("Explorer initialized");
-        }
-
         // Launch the node
         let handle = node.launch().await.context("failed to launch node")?;
 
