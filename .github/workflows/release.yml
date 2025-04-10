@@ -93,23 +93,33 @@ jobs:
         if: ${{ matrix.job.platform == 'darwin' && matrix.job.arch == 'arm64' }}
         run: |
           arch -arm64 brew install llvm@19 --quiet
-          arch -arm64 brew install zstd
           echo "MLIR_SYS_190_PREFIX=$(arch -arm64 brew --prefix llvm@19)" >> $GITHUB_ENV
           echo "LLVM_SYS_191_PREFIX=$(arch -arm64 brew --prefix llvm@19)" >> $GITHUB_ENV
           echo "TABLEGEN_190_PREFIX=$(arch -arm64 brew --prefix llvm@19)" >> $GITHUB_ENV
           echo "LIBRARY_PATH=$(arch -arm64 brew --prefix zstd)/lib:$LIBRARY_PATH" >> $GITHUB_ENV
           echo "CPATH=$(arch -arm64 brew --prefix zstd)/include:$CPATH" >> $GITHUB_ENV
 
-      - name: Install LLVM dependencies for macOS (x86_64)
+      # On Apple Silicon Macs, Homebrew has different installation paths for different architectures:
+      #
+      # - ARM64 version installs to /opt/homebrew
+      # - x86_64 version installs to /usr/local
+      #
+      # For cross-architecture builds, we need to explicitly install the x86_64 version of Homebrew.
+      # Reference: https://github.com/orgs/Homebrew/discussions/1007
+      - name: Install x86_64 Homebrew for macOS (x86_64)
         if: ${{ matrix.job.platform == 'darwin' && matrix.job.arch == 'amd64' }}
         run: |
-          arch -x86_64 brew install llvm@19 --quiet
-          arch -x86_64 brew install zstd
-          echo "MLIR_SYS_190_PREFIX=$(arch -x86_64 brew --prefix llvm@19)" >> $GITHUB_ENV
-          echo "LLVM_SYS_191_PREFIX=$(arch -x86_64 brew --prefix llvm@19)" >> $GITHUB_ENV
-          echo "TABLEGEN_190_PREFIX=$(arch -x86_64 brew --prefix llvm@19)" >> $GITHUB_ENV
-          echo "LIBRARY_PATH=$(arch -x86_64 brew --prefix zstd)/lib:$LIBRARY_PATH" >> $GITHUB_ENV
-          echo "CPATH=$(arch -x86_64 brew --prefix zstd)/include:$CPATH" >> $GITHUB_ENV
+          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+          # Use the x86_64 Homebrew to install LLVM
+          arch -x86_64 /usr/local/bin/brew install llvm@19 --quiet
+
+          # Set environment variables to use x86_64 LLVM
+          echo "MLIR_SYS_190_PREFIX=$(arch -x86_64 /usr/local/bin/brew --prefix llvm@19)" >> $GITHUB_ENV
+          echo "LLVM_SYS_191_PREFIX=$(arch -x86_64 /usr/local/bin/brew --prefix llvm@19)" >> $GITHUB_ENV
+          echo "TABLEGEN_190_PREFIX=$(arch -x86_64 /usr/local/bin/brew --prefix llvm@19)" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$(arch -x86_64 /usr/local/bin/brew --prefix zstd)/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+          echo "CPATH=$(arch -x86_64 /usr/local/bin/brew --prefix zstd)/include:$CPATH" >> $GITHUB_ENV
 
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
