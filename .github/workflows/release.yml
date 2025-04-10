@@ -119,6 +119,9 @@ jobs:
           echo "LIBRARY_PATH=$(arch -x86_64 /usr/local/bin/brew --prefix zstd)/lib:$LIBRARY_PATH" >> $GITHUB_ENV
           echo "CPATH=$(arch -x86_64 /usr/local/bin/brew --prefix zstd)/include:$CPATH" >> $GITHUB_ENV
 
+          # Force Rust to use x86_64 architecture for all compilation
+          echo "RUSTFLAGS=-C linker=$(which ld) -C link-args=-arch -C link-args=x86_64" >> $GITHUB_ENV
+
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
         run: |
