@@ -79,6 +79,11 @@ jobs:
       - name: Install LLVM dependencies for Linux
         if: ${{ matrix.job.platform == 'linux' }}
         run: |
+          # Use the script provided by LLVM to install a version but also setup the apt repository.
+          bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 19
           sudo apt-get update -y
           sudo apt-get install -y g++ llvm-19 llvm-19-dev llvm-19-runtime clang-19 clang-tools-19 lld-19 libpolly-19-dev libmlir-19-dev mlir-19-tools
 
