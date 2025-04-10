@@ -72,6 +72,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          key: ${{ matrix.job.target }}
 
       - uses: oven-sh/setup-bun@v2
         with:
