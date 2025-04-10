@@ -73,6 +73,10 @@ jobs:
         with:
           cache-on-failure: true
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install LLVM dependencies for Linux
         if: ${{ matrix.job.platform == 'linux' }}
         run: |
@@ -111,7 +115,7 @@ jobs:
           # See: https://github.com/jemalloc/jemalloc/issues/467
           echo "JEMALLOC_SYS_WITH_LG_PAGE=16" >> $GITHUB_ENV
 
-      - name: Build binaries
+      - name: Build binary
         run: |
           cargo --version
           cargo build -p katana --features native --profile performance --target ${{ matrix.job.target }}
