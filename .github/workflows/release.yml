@@ -63,16 +63,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         name: Rust Toolchain Setup
         with:
-          targets: ${{ matrix.job.target }}
           toolchain: "1.83.0"
-
-      - uses: Swatinem/rust-cache@v2
-        with:
+          target: ${{ matrix.job.target }}
           cache-on-failure: true
-          key: ${{ matrix.job.target }}
+          cache-key: ${{ matrix.job.target }}
 
       - uses: oven-sh/setup-bun@v2
         with:
