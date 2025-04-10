@@ -51,11 +51,11 @@ jobs:
             target: aarch64-unknown-linux-gnu
             arch: arm64
             svm_target_platform: linux-aarch64
-          - os: macos-latest-xlarge
+          - os: macos-13-xlarge
             platform: darwin
             target: x86_64-apple-darwin
             arch: amd64
-          - os: macos-latest
+          - os: macos-latest-xlarge
             platform: darwin
             target: aarch64-apple-darwin
             arch: arm64
