@@ -34,6 +34,7 @@ jobs:
       PLATFORM_NAME: ${{ matrix.job.platform }}
       TARGET: ${{ matrix.job.target }}
       ARCH: ${{ matrix.job.arch }}
+      CARGO_PROFILE: performance
     strategy:
       matrix:
         job:
@@ -116,7 +117,7 @@ jobs:
       - name: Build binary
         run: |
           cargo --version
-          cargo build -p katana --features native --profile performance --target ${{ matrix.job.target }}
+          cargo build -p katana --features native --profile ${CARGO_PROFILE} --target ${{ matrix.job.target }}
 
       - name: Archive binaries
         id: artifacts
@@ -124,12 +125,12 @@ jobs:
           VERSION_NAME: ${{ needs.prepare.outputs.tag_name }}
         run: |
           if [ "$PLATFORM_NAME" == "linux" ]; then
-            tar -czvf "katana_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release katana
+            tar -czvf "katana_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/${CARGO_PROFILE} katana
             echo "file_name=katana_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "katana_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release katana
+            gtar -czvf "katana_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/${CARGO_PROFILE} katana
             echo "file_name=katana_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           fi
         shell: bash
@@ -139,7 +140,7 @@ jobs:
         if: ${{ env.PLATFORM_NAME == 'linux' }}
         run: |
           mkdir -p $PLATFORM_NAME/$ARCH
-          mv target/$TARGET/release/katana $PLATFORM_NAME/$ARCH
+          mv target/${TARGET}/${CARGO_PROFILE}/katana $PLATFORM_NAME/$ARCH
         shell: bash
 
       - name: Upload docker binaries
