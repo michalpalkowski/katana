@@ -89,6 +89,7 @@ jobs:
         if: ${{ matrix.job.platform == 'darwin' }}
         run: |
           brew install llvm@19 --quiet
+          brew install zstd
           echo "MLIR_SYS_190_PREFIX=$(brew --prefix llvm@19)" >> $GITHUB_ENV
           echo "LLVM_SYS_191_PREFIX=$(brew --prefix llvm@19)" >> $GITHUB_ENV
           echo "TABLEGEN_190_PREFIX=$(brew --prefix llvm@19)" >> $GITHUB_ENV
