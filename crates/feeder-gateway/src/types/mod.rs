@@ -95,7 +95,8 @@ pub struct Block {
     pub event_commitment: Option<Felt>,
     pub status: BlockStatus,
     pub l1_da_mode: L1DataAvailabilityMode,
-    pub l2_gas_price: Option<ResourcePrice>,
+    #[serde(default = "default_l2_gas_price")]
+    pub l2_gas_price: ResourcePrice,
     pub l1_gas_price: ResourcePrice,
     pub l1_data_gas_price: ResourcePrice,
     pub transactions: Vec<ConfirmedTransaction>,
@@ -158,4 +159,8 @@ impl From<StateDiff> for katana_primitives::state::StateUpdates {
             deprecated_declared_classes: BTreeSet::from_iter(value.old_declared_contracts),
         }
     }
+}
+
+fn default_l2_gas_price() -> ResourcePrice {
+    ResourcePrice { price_in_fri: Felt::from(1), price_in_wei: Felt::from(1) }
 }
