@@ -93,13 +93,13 @@ katana-trie = { path = "crates/trie" }
 katana-utils = { path = "crates/utils" }
 
 # cairo
-cairo-lang-casm = "2.10.0"
-cairo-lang-runner = "2.10.0"
-cairo-lang-sierra = "2.10.0"
-cairo-lang-sierra-to-casm = "2.10.0"
-cairo-lang-starknet = "2.10.0"
-cairo-lang-starknet-classes = "2.10.0"
-cairo-lang-utils = "2.10.0"
+cairo-lang-casm = "2.11.2"
+cairo-lang-runner = "2.11.2"
+cairo-lang-sierra = "2.11.2"
+cairo-lang-sierra-to-casm = "2.11.2"
+cairo-lang-starknet = "2.11.2"
+cairo-lang-starknet-classes = "2.11.2"
+cairo-lang-utils = "2.11.2"
 # Some types that we used from cairo-vm implements the `Arbitrary` trait,
 # only under the `test_utils` feature. So we expose through this feature.
 cairo-vm = { version = "1.0.2", features = [ "test_utils" ] }
@@ -166,7 +166,7 @@ similar-asserts = "1.5.0"
 smol_str = { version = "0.2.0", features = [ "serde" ] }
 spinoff = "0.8.0"
 sqlx = { version = "0.8.2", features = [ "chrono", "macros", "regexp", "runtime-async-std", "runtime-tokio", "sqlite", "uuid" ] }
-starknet_api = { git = "https://github.com/dojoengine/sequencer", rev = "58aacaf4" }
+starknet_api = { git = "https://github.com/dojoengine/sequencer", rev = "4b1587c5e" }
 strum = "0.25"
 strum_macros = "0.25"
 tempfile = "3.9.0"

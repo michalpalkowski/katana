@@ -21,7 +21,7 @@ use crate::{EntryPointCall, ExecutionError};
 pub fn execute_call<S: StateReader>(
     request: EntryPointCall,
     state: S,
-    block_context: &BlockContext,
+    block_context: Arc<BlockContext>,
     max_gas: u64,
 ) -> Result<Vec<Felt>, ExecutionError> {
     let mut state = CachedState::new(state);
@@ -32,7 +32,7 @@ pub fn execute_call<S: StateReader>(
 fn execute_call_inner<S: StateReader>(
     request: EntryPointCall,
     state: &mut CachedState<S>,
-    block_context: &BlockContext,
+    block_context: Arc<BlockContext>,
     max_gas: u64,
 ) -> EntryPointExecutionResult<CallInfo> {
     let call = CallEntryPoint {
@@ -78,6 +78,7 @@ fn execute_call_inner<S: StateReader>(
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+    use std::sync::Arc;
 
     use blockifier::context::BlockContext;
     use blockifier::state::cached_state::{self};
@@ -118,7 +119,7 @@ mod tests {
         // ---------------------------------------------------------------
 
         let mut state = cached_state::CachedState::new(state);
-        let ctx = BlockContext::create_for_testing();
+        let ctx = Arc::new(BlockContext::create_for_testing());
 
         let mut req = EntryPointCall {
             calldata: Vec::new(),
@@ -130,12 +131,12 @@ mod tests {
         {
             // ~900,000 gas
             req.calldata = vec![felt!("460")];
-            let info = execute_call_inner(req.clone(), &mut state, &ctx, max_gas_1).unwrap();
+            let info = execute_call_inner(req.clone(), &mut state, ctx.clone(), max_gas_1).unwrap();
             assert!(!info.execution.failed);
             assert!(max_gas_1 >= info.execution.gas_consumed);
 
             req.calldata = vec![felt!("600")];
-            let info = execute_call_inner(req.clone(), &mut state, &ctx, max_gas_1).unwrap();
+            let info = execute_call_inner(req.clone(), &mut state, ctx.clone(), max_gas_1).unwrap();
             assert!(info.execution.failed, "should fail due to out of run resources");
         }
 
@@ -143,26 +144,26 @@ mod tests {
         {
             // rougly equivalent to 9,000,000 gas
             req.calldata = vec![felt!("4600")];
-            let info = execute_call_inner(req.clone(), &mut state, &ctx, max_gas_2).unwrap();
+            let info = execute_call_inner(req.clone(), &mut state, ctx.clone(), max_gas_2).unwrap();
             assert!(!info.execution.failed);
             assert!(max_gas_2 >= info.execution.gas_consumed);
             assert!(max_gas_1 < info.execution.gas_consumed);
 
             req.calldata = vec![felt!("5000")];
-            let info = execute_call_inner(req.clone(), &mut state, &ctx, max_gas_2).unwrap();
+            let info = execute_call_inner(req.clone(), &mut state, ctx.clone(), max_gas_2).unwrap();
             assert!(info.execution.failed, "should fail due to out of run resources");
         }
 
         let max_gas_3 = 100_000_000;
         {
             req.calldata = vec![felt!("47000")];
-            let info = execute_call_inner(req.clone(), &mut state, &ctx, max_gas_3).unwrap();
+            let info = execute_call_inner(req.clone(), &mut state, ctx.clone(), max_gas_3).unwrap();
             assert!(!info.execution.failed);
             assert!(max_gas_3 >= info.execution.gas_consumed);
             assert!(max_gas_2 < info.execution.gas_consumed);
 
             req.calldata = vec![felt!("60000")];
-            let info = execute_call_inner(req.clone(), &mut state, &ctx, max_gas_3).unwrap();
+            let info = execute_call_inner(req.clone(), &mut state, ctx.clone(), max_gas_3).unwrap();
             assert!(info.execution.failed, "should fail due to out of run resources");
         }
 

@@ -184,7 +184,7 @@ fn validate(
         ExecutionFlags::new().with_account_validation(!skip_validate).with_fee(!skip_fee_check);
 
     match to_executor_tx(pool_tx.clone(), flags) {
-        Transaction::Account(tx) => match validator.perform_validations(tx, skip_validate) {
+        Transaction::Account(tx) => match validator.perform_validations(tx) {
             Ok(()) => Ok(ValidationOutcome::Valid(pool_tx)),
             Err(e) => match map_invalid_tx_err(e) {
                 Ok(error) => Ok(ValidationOutcome::Invalid { tx: pool_tx, error }),

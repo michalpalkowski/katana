@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 // Re-export the blockifier crate.
 pub use blockifier;
 use blockifier::bouncer::{n_steps_to_sierra_gas, Bouncer, BouncerConfig, BouncerWeights};
@@ -92,7 +94,7 @@ impl ExecutorFactory for BlockifierFactory {
 
 #[derive(Debug)]
 pub struct StarknetVMProcessor<'a> {
-    block_context: BlockContext,
+    block_context: Arc<BlockContext>,
     state: CachedState<'a>,
     transactions: Vec<(TxWithHash, ExecutionResult)>,
     simulation_flags: ExecutionFlags,
@@ -111,7 +113,7 @@ impl<'a> StarknetVMProcessor<'a> {
         max_call_gas: u64,
     ) -> Self {
         let transactions = Vec::new();
-        let block_context = utils::block_context_from_envs(&block_env, &cfg_env);
+        let block_context = Arc::new(utils::block_context_from_envs(&block_env, &cfg_env));
         let state = state::CachedState::new(state, COMPILED_CLASS_CACHE.clone());
 
         let mut block_max_capacity = BouncerWeights::max();
@@ -186,8 +188,12 @@ impl<'a> StarknetVMProcessor<'a> {
             use_kzg_da: false,
         };
 
-        self.block_context =
-            BlockContext::new(block_info, chain_info, versioned_constants, Default::default());
+        self.block_context = Arc::new(BlockContext::new(
+            block_info,
+            chain_info,
+            versioned_constants,
+            Default::default(),
+        ));
     }
 
     fn simulate_with<F, T>(
@@ -377,10 +383,10 @@ impl ExecutorExt for StarknetVMProcessor<'_> {
     }
 
     fn call(&self, call: EntryPointCall) -> Result<Vec<Felt>, ExecutionError> {
-        let block_context = &self.block_context;
         let mut state = self.state.inner.lock();
         let state = MutRefState::new(&mut state.cached_state);
-        let retdata = call::execute_call(call, state, block_context, self.max_call_gas)?;
+        let retdata =
+            call::execute_call(call, state, self.block_context.clone(), self.max_call_gas)?;
         Ok(retdata)
     }
 }

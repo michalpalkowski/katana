@@ -57,7 +57,7 @@ jobs:
           file: .github/Dockerfile
           tags: ghcr.io/${{ github.repository }}-runner:${{ needs.setup.outputs.tag_name }}-${{ matrix.job.arch }}
           build-args: |
-            RUST_VERSION=1.83.0
+            RUST_VERSION=1.85.0
             BUILD_TYPE=${{ github.event_name }}
           platforms: ${{ matrix.job.platform }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}-runner:latest

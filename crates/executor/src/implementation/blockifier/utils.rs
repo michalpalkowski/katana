@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::Arc;
 
+use blockifier::blockifier_versioned_constants::VersionedConstants;
 use blockifier::bouncer::{Bouncer, BouncerConfig};
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
 use blockifier::execution::call_info::{
@@ -20,7 +21,6 @@ use blockifier::transaction::account_transaction::{
 use blockifier::transaction::objects::{HasRelatedFeeType, TransactionExecutionInfo};
 use blockifier::transaction::transaction_execution::Transaction;
 use blockifier::transaction::transactions::ExecutableTransaction;
-use blockifier::versioned_constants::VersionedConstants;
 use cairo_vm::types::errors::program_errors::ProgramError;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use katana_primitives::chain::NamedChainId;
@@ -87,7 +87,7 @@ pub fn transact<S: StateReader>(
         // `skip_fee_transfer` is explicitly set, or when the transaction `max_fee` is set to 0). In
         // these cases, we still want to calculate the fee.
         let fee = if info.receipt.fee == Fee(0) {
-            get_fee_by_gas_vector(block_context.block_info(), info.receipt.gas, &fee_type)
+            get_fee_by_gas_vector(block_context.block_info(), info.receipt.gas, &fee_type, Tip(0))
         } else {
             info.receipt.fee
         };
@@ -656,8 +656,9 @@ fn to_call_info(call: CallInfo) -> trace::CallInfo {
         EntryPointType::Constructor => trace::EntryPointType::Constructor,
     };
 
-    let storage_read_values = call.storage_read_values;
-    let storg_keys = call.accessed_storage_keys.into_iter().map(|k| *k.0.key()).collect();
+    let storage_read_values = call.storage_access_tracker.storage_read_values;
+    let storg_keys =
+        call.storage_access_tracker.accessed_storage_keys.into_iter().map(|k| *k.0.key()).collect();
     let inner_calls = call.inner_calls.into_iter().map(to_call_info).collect();
     let execution_resources = to_execution_resources(call.resources);
     let gas_consumed = call.execution.gas_consumed as u128;
@@ -716,8 +717,8 @@ impl From<ExecutionFlags> for BlockifierExecutionFlags {
         Self {
             only_query: false,
             charge_fee: value.fee(),
-            nonce_check: value.nonce_check(),
             validate: value.account_validation(),
+            strict_nonce_check: value.nonce_check(),
         }
     }
 }
@@ -772,6 +773,7 @@ mod tests {
 
     use std::collections::{HashMap, HashSet};
 
+    use blockifier::execution::call_info::StorageAccessTracker;
     use blockifier::execution::entry_point::CallEntryPoint;
     use cairo_vm::types::builtin_name::BuiltinName;
     use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
@@ -865,8 +867,11 @@ mod tests {
                 events: top_events,
                 ..Default::default()
             },
-            storage_read_values: vec![felt!(1_u8), felt!(2_u8)],
-            accessed_storage_keys: HashSet::from([3u128.into(), 4u128.into(), 5u128.into()]),
+            storage_access_tracker: StorageAccessTracker {
+                storage_read_values: vec![felt!(1_u8), felt!(2_u8)],
+                accessed_storage_keys: HashSet::from([3u128.into(), 4u128.into(), 5u128.into()]),
+                ..Default::default()
+            },
             resources: ExecutionResources {
                 n_steps: 1_000_000,
                 n_memory_holes: 9_000,
@@ -911,9 +916,9 @@ mod tests {
             EntryPointType::Constructor => trace::EntryPointType::Constructor,
         };
 
-        let expected_storage_read_values = call.storage_read_values.clone();
+        let expected_storage_read_values = call.storage_access_tracker.storage_read_values.clone();
         let expected_storage_keys: HashSet<Felt> =
-            call.accessed_storage_keys.iter().map(|v| *v.key()).collect();
+            call.storage_access_tracker.accessed_storage_keys.iter().map(|v| *v.key()).collect();
         let expected_inner_calls: Vec<_> =
             call.inner_calls.clone().into_iter().map(to_call_info).collect();
 
