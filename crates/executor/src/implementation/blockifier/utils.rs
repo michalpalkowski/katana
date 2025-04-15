@@ -97,11 +97,11 @@ pub fn transact<S: StateReader>(
         let (unit, gas_price) = match fee_type {
             FeeType::Eth => (
                 PriceUnit::Wei,
-                block_context.block_info().gas_prices.eth_gas_prices.l2_gas_price.get().0,
+                block_context.block_info().gas_prices.eth_gas_prices.l1_gas_price.get().0,
             ),
             FeeType::Strk => (
                 PriceUnit::Fri,
-                block_context.block_info().gas_prices.strk_gas_prices.l2_gas_price.get().0,
+                block_context.block_info().gas_prices.strk_gas_prices.l1_gas_price.get().0,
             ),
         };
 
