@@ -369,7 +369,7 @@ pub struct LoggingOptions {
     #[arg(default_value_t = LogFormat::Full)]
     pub log_format: LogFormat,
 }
-#[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Args, Default, Clone, Serialize, Deserialize, PartialEq)]
 #[command(next_help_heading = "Gas Price Oracle Options")]
 pub struct GasPriceOracleOptions {
     /// The L1 ETH gas price. (denominated in wei)
@@ -397,17 +397,6 @@ pub struct GasPriceOracleOptions {
     pub l1_strk_data_gas_price: Option<NonZeroU128>,
 }
 
-impl Default for GasPriceOracleOptions {
-    fn default() -> Self {
-        Self {
-            l1_eth_gas_price: None,
-            l1_strk_gas_price: None,
-            l1_eth_data_gas_price: None,
-            l1_strk_data_gas_price: None,
-        }
-    }
-}
-
 #[cfg(feature = "slot")]
 #[derive(Debug, Args, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[command(next_help_heading = "Slot options")]
@@ -415,6 +404,63 @@ pub struct SlotOptions {
     #[arg(hide = true)]
     #[arg(long = "slot.controller")]
     pub controller: bool,
+}
+
+#[cfg(feature = "cartridge")]
+#[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq)]
+#[command(next_help_heading = "Cartridge options")]
+pub struct CartridgeOptions {
+    /// Declare all versions of the Controller class at genesis. This is implictly enabled if
+    /// `--cartridge.paymaster` is provided.
+    #[arg(long = "cartridge.controllers")]
+    pub controllers: bool,
+
+    /// Whether to use the Cartridge paymaster.
+    /// This has the cost to call the Cartridge API to check
+    /// if a controller account exists on each estimate fee call.
+    ///
+    /// Mostly used for local development using controller, and must be
+    /// disabled for slot deployments.
+    #[arg(long = "cartridge.paymaster")]
+    #[arg(default_value_t = false)]
+    #[serde(default)]
+    pub paymaster: bool,
+
+    /// The root URL for the Cartridge API.
+    ///
+    /// This is used to fetch the calldata for the constructor of the given controller
+    /// address (at the moment). Must be configurable for local development
+    /// with local cartridge API.
+    #[arg(long = "cartridge.api", requires = "paymaster")]
+    #[arg(default_value = "https://api.cartridge.gg")]
+    #[serde(default = "default_api_url")]
+    pub api: Url,
+}
+
+#[cfg(feature = "cartridge")]
+impl CartridgeOptions {
+    pub fn merge(&mut self, other: Option<&Self>) {
+        if let Some(other) = other {
+            if self.paymaster == default_paymaster() {
+                self.paymaster = other.paymaster;
+            }
+
+            if self.api == default_api_url() {
+                self.api = other.api.clone();
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cartridge")]
+impl Default for CartridgeOptions {
+    fn default() -> Self {
+        CartridgeOptions {
+            controllers: false,
+            paymaster: default_paymaster(),
+            api: default_api_url(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Args, Clone, Serialize, Deserialize, PartialEq)]
@@ -518,4 +564,12 @@ where
         Some(value) => serializer.serialize_str(&format!("{value:#x}")),
         None => serializer.serialize_none(),
     }
+}
+
+fn default_paymaster() -> bool {
+    false
+}
+
+fn default_api_url() -> Url {
+    Url::parse("https://api.cartridge.gg").expect("qed; invalid url")
 }

@@ -45,9 +45,7 @@ pprof.workspace = true
 default = [ "serde" ]
 
 arbitrary = [ "alloy-primitives/arbitrary", "dep:arbitrary" ]
-controller = [  ]
 serde = [ "alloy-primitives/serde" ]
-slot = [ "controller" ]
 
 [[bench]]
 harness = false
