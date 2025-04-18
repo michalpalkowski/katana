@@ -6194,7 +6194,6 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "assert_matches",
- "cainome-cairo-serde 0.1.0 (git+https://github.com/cartridge-gg/cainome?tag=v0.4.12)",
  "clap",
  "console",
  "dojo-utils",
