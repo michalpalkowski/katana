@@ -119,6 +119,10 @@ pub struct ServerOptions {
     #[arg(long = "rpc.max-response-body-size", value_name = "SIZE")]
     pub max_response_body_size: Option<u32>,
 
+    /// Timeout for the RPC server request (in seconds).
+    #[arg(long = "rpc.timeout", value_name = "TIMEOUT")]
+    pub timeout: Option<u64>,
+
     /// Maximum page size for event queries.
     #[arg(long = "rpc.max-event-page-size", value_name = "SIZE")]
     #[arg(default_value_t = DEFAULT_RPC_MAX_EVENT_PAGE_SIZE)]
@@ -151,6 +155,7 @@ impl Default for ServerOptions {
             max_connections: None,
             max_request_body_size: None,
             max_response_body_size: None,
+            timeout: None,
             max_call_gas: DEFAULT_RPC_MAX_CALL_GAS,
         }
     }
@@ -180,6 +185,9 @@ impl ServerOptions {
             }
             if self.max_response_body_size.is_none() {
                 self.max_response_body_size = other.max_response_body_size;
+            }
+            if self.timeout.is_none() {
+                self.timeout = other.timeout;
             }
             if self.max_event_page_size == DEFAULT_RPC_MAX_EVENT_PAGE_SIZE {
                 self.max_event_page_size = other.max_event_page_size;
