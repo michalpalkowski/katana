@@ -76,7 +76,7 @@ pub enum StarknetApiError {
     UnsupportedTransactionVersion,
     #[error("The contract class version is not supported")]
     UnsupportedContractClassVersion,
-    #[error("An unexpected error occured")]
+    #[error("An unexpected error occurred")]
     UnexpectedError { reason: String },
     #[error("Too many keys provided in a filter")]
     TooManyKeysInFilter,
