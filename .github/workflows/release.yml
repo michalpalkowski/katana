@@ -166,7 +166,7 @@ jobs:
           cargo build --bin katana --profile performance --target ${{ matrix.job.target }}
 
       - name: Build binary ( Linux & macOS )
-        if: ${{ ! matrix.job.platform == 'win32' }}
+        if: ${{ matrix.job.platform != 'win32' }}
         run: |
           cargo build --bin katana --features native --profile performance --target ${{ matrix.job.target }}
 
