@@ -33,7 +33,7 @@ RUN rustup toolchain install ${CLIPPY_VERSION} && \
 RUN rustup target add x86_64-pc-windows-msvc && \
 	rustup target add wasm32-unknown-unknown
 
-RUN cargo install cargo-get cargo-nextest cargo-llvm-cov cargo-release --secure -y
+RUN cargo install cargo-get cargo-nextest cargo-llvm-cov cargo-release
 
 # Platform specific tooling
 ARG TARGETPLATFORM
