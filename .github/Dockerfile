@@ -24,11 +24,11 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/ca
 RUN rustup toolchain install ${RUST_VERSION} && \
 	rustup default ${RUST_VERSION} && \
 	rustup component add clippy && \
-	rustup component add rustfmt
+	rustup component add rustfmt && \
+	rustup component add llvm-tools-preview
 
 RUN rustup toolchain install ${CLIPPY_VERSION} && \
-	rustup component add rustfmt clippy --toolchain ${CLIPPY_VERSION} \
-	rustup component add llvm-tools-preview
+	rustup component add rustfmt clippy --toolchain ${CLIPPY_VERSION}
 
 RUN rustup target add x86_64-pc-windows-msvc && \
 	rustup target add wasm32-unknown-unknown
