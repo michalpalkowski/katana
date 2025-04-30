@@ -19,6 +19,7 @@ jobs:
       VERSION: ""
     steps:
       - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "*"
 
       - name: "Setup toolchain"
         uses: "actions-rs/toolchain@v1"
