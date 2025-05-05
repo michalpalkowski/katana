@@ -20,7 +20,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Setup Dojo
-        uses: dojoengine/setup-dojo@v0
+        uses: dojoengine/setup-dojo@v0.1.0
         with:
           version: 1.5.0
 
