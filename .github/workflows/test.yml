@@ -31,7 +31,6 @@ jobs:
       image: ghcr.io/dojoengine/katana-dev:latest
     steps:
       - uses: actions/checkout@v3
-      - uses: Swatinem/rust-cache@v2
       - run: scripts/rust_fmt.sh --check
 
   generate-test-artifacts:
@@ -93,6 +92,9 @@ jobs:
       - run: git config --global --add safe.directory "*"
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ github.job }}
+          shared-key: katana-ci-cache
 
       - name: Restore test artifacts
         uses: actions/cache@v3
@@ -122,6 +124,9 @@ jobs:
       - run: git config --global --add safe.directory "*"
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ github.job }}
+          shared-key: katana-ci-cache
 
       - name: Run tests
         run: |
@@ -150,6 +155,9 @@ jobs:
       - run: git config --global --add safe.directory "*"
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ github.job }}
+          shared-key: katana-ci-cache
 
       - name: Restore test artifacts from clippy job
         id: restore-test-artifacts
@@ -180,6 +188,9 @@ jobs:
       # Workaround for https://github.com/actions/runner-images/issues/6775
       - run: git config --global --add safe.directory "*"
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ github.job }}
+          shared-key: katana-ci-cache
       - uses: browser-actions/setup-chrome@v1
       - run: |
           cargo run -p reverse-proxy-test
