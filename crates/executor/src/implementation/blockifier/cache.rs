@@ -25,6 +25,8 @@ pub enum Error {
 pub struct ClassCacheBuilder {
     size: usize,
     #[cfg(feature = "native")]
+    compile_native: bool,
+    #[cfg(feature = "native")]
     thread_count: usize,
     #[cfg(feature = "native")]
     thread_name: Option<Box<dyn Fn(usize) -> String + Send + Sync + 'static>>,
@@ -36,13 +38,11 @@ pub struct ClassCacheBuilder {
 
 impl ClassCacheBuilder {
     /// Creates a new `ClassCacheBuilder` with default settings.
-    ///
-    /// Default values:
-    /// - Cache size: 100 entries
-    /// - Thread count: 3 threads (when "native" feature is enabled)
     pub fn new() -> Self {
         Self {
             size: 100,
+            #[cfg(feature = "native")]
+            compile_native: false,
             #[cfg(feature = "native")]
             thread_count: 3,
             #[cfg(feature = "native")]
@@ -50,7 +50,7 @@ impl ClassCacheBuilder {
         }
     }
 
-    /// Sets the maximum number of entries in the class cache.
+    /// Sets the maximum number of entries in the class cache. Default is 100.
     ///
     /// # Arguments
     ///
@@ -60,18 +60,22 @@ impl ClassCacheBuilder {
         self
     }
 
-    /// Sets the number of threads in the thread pool for native compilation.
-    ///
-    /// # Arguments
-    ///
-    /// * `count` - The number of threads to use for native compilation.
-    ///
-    /// # Notes
+    /// Enables or disables native compilation. Default is disabled.
+    #[cfg(feature = "native")]
+    pub fn compile_native(mut self, enable: bool) -> Self {
+        self.compile_native = enable;
+        self
+    }
+
+    /// Sets the number of threads in the thread pool for native compilation. Default is 3.
     ///
     /// If `count` is zero, the thread pool will choose the number of threads
     /// automatically. This is typically based on the number of logical CPUs
     /// available to the process. However, the exact behavior depends on the
     /// underlying Rayon's [`ThreadPool`](rayon::ThreadPool) implementation.
+    ///
+    /// If native compilation is not enabled via [`ClassCacheBuilder::compile_native`],
+    /// configuring the thread pool is a no-op.
     #[cfg(feature = "native")]
     pub fn thread_count(mut self, count: usize) -> Self {
         self.thread_count = count;
@@ -79,6 +83,9 @@ impl ClassCacheBuilder {
     }
 
     /// Sets the thread name for the native compilation thread pool.
+    ///
+    /// If native compilation is not enabled via [`ClassCacheBuilder::compile_native`],
+    /// configuring the thread pool is a no-op.
     ///
     /// # Arguments
     ///
@@ -102,11 +109,13 @@ impl ClassCacheBuilder {
         let cache = Cache::new(self.size);
 
         #[cfg(feature = "native")]
-        let pool = {
+        let pool = if self.compile_native {
             let builder = rayon::ThreadPoolBuilder::new().num_threads(self.thread_count);
             let default_thread_name = Box::new(|i| format!("cache-native-compiler-{i}")) as _;
             let thread_name = self.thread_name.unwrap_or(default_thread_name);
-            builder.thread_name(thread_name).build()?
+            Some(builder.thread_name(thread_name).build()?)
+        } else {
+            None
         };
 
         Ok(ClassCache {
@@ -130,6 +139,7 @@ impl std::fmt::Debug for ClassCacheBuilder {
         {
             f.debug_struct("ClassCacheBuilder")
                 .field("size", &self.size)
+                .field("compile_native", &self.compile_native)
                 .field("thread_count", &self.thread_count)
                 .field("thread_name", &"..")
                 .finish()
@@ -143,6 +153,15 @@ impl Default for ClassCacheBuilder {
     }
 }
 
+/// Cache for compiled contract classes.
+///
+/// ## Cairo Native
+///
+/// When native compilation is enabled, every (non-legacy) class that gets inserted into the cache
+/// will trigger an asynchronous compilation process for compiling the class into native
+/// code using `cairo-native`. Once the compilation is done, the current cache entry for the class
+/// will be replaced with the native-compiled variant. This process won't block the cache
+/// operations.
 #[derive(Debug, Clone)]
 pub struct ClassCache {
     inner: Arc<Inner>,
@@ -150,8 +169,12 @@ pub struct ClassCache {
 
 #[derive(Debug)]
 struct Inner {
+    /// Threadpool for compiling the contract classes into native machine code.
+    ///
+    /// The threadpool would ONLY ever be present if native compilation is enabled when
+    /// building the cache via [`ClassCacheBuilder::compile_native`].
     #[cfg(feature = "native")]
-    pool: rayon::ThreadPool,
+    pool: Option<rayon::ThreadPool>,
     cache: Cache<ClassHash, RunnableCompiledClass>,
 }
 
@@ -205,23 +228,23 @@ impl ClassCache {
                 let compiled = CompiledClassV1::try_from((casm, version.clone())).unwrap();
 
                 #[cfg(feature = "native")]
-                let inner = self.inner.clone();
-                #[cfg(feature = "native")]
-                let compiled_clone = compiled.clone();
+                if let Some(pool) = self.inner.pool.as_ref() {
+                    let inner = self.inner.clone();
+                    let compiled_clone = compiled.clone();
 
-                #[cfg(feature = "native")]
-                self.inner.pool.spawn(move || {
-                    tracing::trace!(target: "class_cache", class = format!("{hash:#x}"), "Compiling native class");
+                    pool.spawn(move || {
+                        tracing::trace!(target: "class_cache", class = format!("{hash:#x}"), "Compiling native class");
 
-                    let executor =
-                        AotContractExecutor::new(&program, &entry_points, version.into(), OptLevel::Default)
-                            .unwrap();
+                        let executor =
+                            AotContractExecutor::new(&program, &entry_points, version.into(), OptLevel::Default)
+                                .unwrap();
 
-                    let native = NativeCompiledClassV1::new(executor, compiled_clone);
-                    inner.cache.insert(hash, RunnableCompiledClass::V1Native(native));
+                        let native = NativeCompiledClassV1::new(executor, compiled_clone);
+                        inner.cache.insert(hash, RunnableCompiledClass::V1Native(native));
 
-                    tracing::trace!(target: "class_cache", class = format!("{hash:#x}"), "Native class compiled")
-                });
+                        tracing::trace!(target: "class_cache", class = format!("{hash:#x}"), "Native class compiled")
+                    });
+                }
 
                 let class = RunnableCompiledClass::V1(compiled);
                 self.inner.cache.insert(hash, class.clone());

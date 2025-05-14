@@ -113,6 +113,12 @@ impl Node {
                 factory.set_max_call_gas(max_call_gas);
             }
 
+            #[cfg(feature = "native")]
+            {
+                info!(enabled = config.execution.compile_native, "Cairo native compilation");
+                factory.cairo_native(config.execution.compile_native);
+            }
+
             Arc::new(factory)
         };
 

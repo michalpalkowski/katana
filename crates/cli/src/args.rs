@@ -331,6 +331,8 @@ impl NodeArgs {
         ExecutionConfig {
             invocation_max_steps: self.starknet.environment.invoke_max_steps,
             validation_max_steps: self.starknet.environment.validate_max_steps,
+            #[cfg(feature = "native")]
+            compile_native: self.starknet.environment.compile_native,
             ..Default::default()
         }
     }
