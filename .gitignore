@@ -32,3 +32,4 @@ snos-env
 tests/fixtures/katana_db
 
 **/.claude/settings.local.json
+/programs/
