@@ -52,7 +52,10 @@ katana-rpc-api = { workspace = true, features = [ "client" ] }
 katana-trie.workspace = true
 katana-utils.workspace = true
 
-alloy = { git = "https://github.com/alloy-rs/alloy", features = [ "contract", "network", "node-bindings", "provider-http", "providers", "signer-local" ] }
+# Remove git alloy and use workspace dependencies instead
+alloy-contract.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
 alloy-primitives = { workspace = true, features = [ "serde" ] }
 assert_matches.workspace = true
 cainome.workspace = true
