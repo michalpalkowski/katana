@@ -36,3 +36,4 @@ tests/fixtures/db/*
 !tests/fixtures/db/*.tar.gz
 
 **/.claude/settings.local.json
+/programs/
