@@ -307,7 +307,7 @@ mod fork {
     use super::*;
 
     #[apply(insert_block_cases)]
-    #[ignore = "trie computation not supported yet for forked mode yet"]
+    // #[ignore = "trie computation not supported yet for forked mode yet"]
     fn insert_block_with_fork_provider(
         #[from(fork_provider)] provider: BlockchainProvider<ForkedProvider>,
         #[case] block_count: u64,

@@ -211,6 +211,9 @@ async fn classes_proofs() {
             .await
             .expect("failed to get storage proof");
 
+        let results = ClassesMultiProof::from(MultiProof::from(proofs.clone().classes_proof.nodes));
+        println!("results: {:?}", results);
+
         let results = ClassesMultiProof::from(MultiProof::from(proofs.classes_proof.nodes))
             .verify(proofs.global_roots.classes_tree_root, vec![class_hash]);
 
