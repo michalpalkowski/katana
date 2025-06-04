@@ -51,6 +51,7 @@ katana-node.workspace = true
 katana-rpc-api = { workspace = true, features = [ "client" ] }
 katana-trie.workspace = true
 katana-utils.workspace = true
+katana-db.workspace = true
 
 # Remove git alloy and use workspace dependencies instead
 alloy-contract.workspace = true
