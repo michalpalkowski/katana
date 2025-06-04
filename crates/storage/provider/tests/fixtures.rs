@@ -35,10 +35,12 @@ pub mod fork {
     use super::*;
 
     lazy_static! {
-        pub static ref FORKED_PROVIDER: (KatanaRunner, Arc<JsonRpcClient<HttpTransport>>) = {
+        pub static ref FORKED_PROVIDER: (KatanaRunner, Arc<JsonRpcClient<HttpTransport>>, Url) = {
             let runner = katana_runner::KatanaRunner::new().unwrap();
             let provider = runner.starknet_provider();
-            (runner, Arc::new(provider))
+            let rpc_url = runner.instance.rpc_addr();
+            let url = Url::parse(&format!("http://{}", rpc_url)).expect("invalid url");
+            (runner, Arc::new(provider), url)
         };
     }
 
@@ -48,7 +50,11 @@ pub mod fork {
         #[default(0)] block_num: u64,
     ) -> BlockchainProvider<ForkedProvider> {
         let provider = JsonRpcClient::new(HttpTransport::new(Url::parse(rpc).unwrap()));
-        let provider = ForkedProvider::new_ephemeral(block_num.into(), Arc::new(provider));
+        let provider = ForkedProvider::new_ephemeral(
+            BlockHashOrNumber::Num(block_num),
+            Arc::new(provider),
+            Url::parse(rpc).unwrap(),
+        );
         BlockchainProvider::new(provider)
     }
 
@@ -56,7 +62,11 @@ pub mod fork {
     pub fn fork_provider_with_spawned_fork_network(
         #[default(0)] block_num: u64,
     ) -> BlockchainProvider<ForkedProvider> {
-        let provider = ForkedProvider::new_ephemeral(block_num.into(), FORKED_PROVIDER.1.clone());
+        let provider = ForkedProvider::new_ephemeral(
+            BlockHashOrNumber::Num(block_num),
+            FORKED_PROVIDER.1.clone(),
+            FORKED_PROVIDER.2.clone(),
+        );
         BlockchainProvider::new(provider)
     }
 }
