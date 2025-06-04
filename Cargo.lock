@@ -6047,6 +6047,7 @@ dependencies = [
  "jsonrpsee",
  "katana-chain-spec",
  "katana-core",
+ "katana-db",
  "katana-executor",
  "katana-explorer",
  "katana-messaging",
