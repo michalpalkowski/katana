@@ -21,15 +21,16 @@
 //! - Response time for each method call
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
-use jsonrpsee::server::logger::{HttpRequest, Logger, MethodKind, Params, TransportProtocol};
-use jsonrpsee::RpcModule;
+use jsonrpsee::core::middleware::{Batch, Notification, RpcServiceT};
+use jsonrpsee::types::Request;
+use jsonrpsee::{MethodResponse, RpcModule};
 use katana_metrics::metrics::{Counter, Histogram};
 use katana_metrics::Metrics;
-use tracing::debug;
+use tower::Layer;
 
 /// Metrics for the RPC server.
 #[allow(missing_debug_implementations)]
@@ -50,7 +51,7 @@ impl RpcServerMetrics {
         Self {
             inner: Arc::new(RpcServerMetricsInner {
                 call_metrics,
-                connection_metrics: ConnectionMetrics::default(),
+                connection_metrics: RpcServerConnectionMetrics::default(),
             }),
         }
     }
@@ -59,36 +60,9 @@ impl RpcServerMetrics {
 #[derive(Default, Clone)]
 struct RpcServerMetricsInner {
     /// Connection metrics per transport type
-    connection_metrics: ConnectionMetrics,
+    connection_metrics: RpcServerConnectionMetrics,
     /// Call metrics per RPC method
     call_metrics: HashMap<&'static str, RpcServerCallMetrics>,
-}
-
-#[derive(Clone)]
-struct ConnectionMetrics {
-    /// Metrics for WebSocket connections
-    ws: RpcServerConnectionMetrics,
-    /// Metrics for HTTP connections
-    http: RpcServerConnectionMetrics,
-}
-
-impl ConnectionMetrics {
-    /// Returns the metrics for the given transport protocol
-    fn get_metrics(&self, transport: TransportProtocol) -> &RpcServerConnectionMetrics {
-        match transport {
-            TransportProtocol::Http => &self.http,
-            TransportProtocol::WebSocket => &self.ws,
-        }
-    }
-}
-
-impl Default for ConnectionMetrics {
-    fn default() -> Self {
-        Self {
-            ws: RpcServerConnectionMetrics::new_with_labels(&[("transport", "ws")]),
-            http: RpcServerConnectionMetrics::new_with_labels(&[("transport", "http")]),
-        }
-    }
 }
 
 /// Metrics for the RPC connections
@@ -121,54 +95,96 @@ struct RpcServerCallMetrics {
     time_seconds: Histogram,
 }
 
-/// Implements the [Logger] trait so that we can collect metrics on each server request life-cycle.
-impl Logger for RpcServerMetrics {
-    type Instant = Instant;
+/// Tower layer for RPC server metrics
+#[allow(missing_debug_implementations)]
+#[derive(Clone)]
+pub struct RpcServerMetricsLayer {
+    metrics: RpcServerMetrics,
+}
 
-    fn on_connect(&self, _: SocketAddr, _: &HttpRequest, transport: TransportProtocol) {
-        self.inner.connection_metrics.get_metrics(transport).connections_opened.increment(1)
+impl RpcServerMetricsLayer {
+    pub fn new(module: &RpcModule<()>) -> Self {
+        Self { metrics: RpcServerMetrics::new(module) }
     }
+}
 
-    fn on_request(&self, transport: TransportProtocol) -> Self::Instant {
-        self.inner.connection_metrics.get_metrics(transport).requests_started.increment(1);
-        Instant::now()
+impl<S> Layer<S> for RpcServerMetricsLayer {
+    type Service = RpcRequestMetricsService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        RpcRequestMetricsService { inner, metrics: self.metrics.clone() }
     }
+}
 
-    fn on_call(&self, method_name: &str, _: Params<'_>, _: MethodKind, _: TransportProtocol) {
-        debug!(target: "server", method = ?method_name);
-        let Some(call_metrics) = self.inner.call_metrics.get(method_name) else { return };
-        call_metrics.started.increment(1);
+/// Tower service that collects metrics for RPC calls
+#[allow(missing_debug_implementations)]
+#[derive(Clone)]
+pub struct RpcRequestMetricsService<S> {
+    inner: S,
+    metrics: RpcServerMetrics,
+}
+
+impl<S> Drop for RpcRequestMetricsService<S> {
+    fn drop(&mut self) {
+        self.metrics.inner.connection_metrics.connections_closed.increment(1);
     }
+}
 
-    fn on_result(
-        &self,
-        method_name: &str,
-        success: bool,
-        started_at: Self::Instant,
-        _: TransportProtocol,
-    ) {
-        let Some(call_metrics) = self.inner.call_metrics.get(method_name) else { return };
+impl<S> RpcServiceT for RpcRequestMetricsService<S>
+where
+    S: RpcServiceT<MethodResponse = MethodResponse> + Send + Sync + Clone + 'static,
+{
+    type MethodResponse = S::MethodResponse;
+    type NotificationResponse = S::NotificationResponse;
+    type BatchResponse = S::BatchResponse;
 
-        // capture call latency
-        let time_taken = started_at.elapsed().as_secs_f64();
-        call_metrics.time_seconds.record(time_taken);
+    fn call<'a>(&self, req: Request<'a>) -> impl Future<Output = S::MethodResponse> + Send + 'a {
+        let started_at = Instant::now();
+        let method = req.method.clone();
 
-        if success {
-            call_metrics.successful.increment(1);
-        } else {
-            call_metrics.failed.increment(1);
+        // Record connection metrics
+        self.metrics.inner.connection_metrics.connections_opened.increment(1);
+        self.metrics.inner.connection_metrics.requests_started.increment(1);
+
+        // Record call metrics
+        if let Some(call_metrics) = self.metrics.inner.call_metrics.get(&method.as_ref()) {
+            call_metrics.started.increment(1);
         }
+
+        let metrics = self.metrics.clone();
+        let fut = self.inner.call(req);
+
+        Box::pin(async move {
+            let result = fut.await;
+
+            // Record response metrics
+            let time_taken = started_at.elapsed().as_secs_f64();
+            metrics.inner.connection_metrics.requests_finished.increment(1);
+            metrics.inner.connection_metrics.request_time_seconds.record(time_taken);
+
+            // Record call result metrics
+            if let Some(call_metrics) = metrics.inner.call_metrics.get(&method.as_ref()) {
+                call_metrics.time_seconds.record(time_taken);
+
+                if result.is_success() {
+                    call_metrics.successful.increment(1)
+                } else {
+                    call_metrics.failed.increment(1)
+                }
+            }
+
+            result
+        })
     }
 
-    fn on_response(&self, _: &str, started_at: Self::Instant, transport: TransportProtocol) {
-        let metrics = self.inner.connection_metrics.get_metrics(transport);
-        // capture request latency for this request/response pair
-        let time_taken = started_at.elapsed().as_secs_f64();
-        metrics.request_time_seconds.record(time_taken);
-        metrics.requests_finished.increment(1);
+    fn batch<'a>(&self, req: Batch<'a>) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
+        self.inner.batch(req)
     }
 
-    fn on_disconnect(&self, _: SocketAddr, transport: TransportProtocol) {
-        self.inner.connection_metrics.get_metrics(transport).connections_closed.increment(1)
+    fn notification<'a>(
+        &self,
+        n: Notification<'a>,
+    ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
+        self.inner.notification(n)
     }
 }
