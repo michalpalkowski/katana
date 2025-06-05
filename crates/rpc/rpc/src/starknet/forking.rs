@@ -1,7 +1,10 @@
+use jsonrpsee::http_client::HttpClientBuilder;
 use katana_primitives::block::{BlockHash, BlockIdOrTag, BlockNumber};
+use katana_primitives::class::ClassHash;
 use katana_primitives::contract::ContractAddress;
 use katana_primitives::transaction::TxHash;
 use katana_primitives::Felt;
+use katana_provider::error::ProviderError;
 use katana_rpc_api::error::starknet::StarknetApiError;
 use katana_rpc_types::block::{
     MaybePendingBlockWithReceipts, MaybePendingBlockWithTxHashes, MaybePendingBlockWithTxs,
@@ -10,16 +13,23 @@ use katana_rpc_types::event::EventsPage;
 use katana_rpc_types::receipt::TxReceiptWithBlockInfo;
 use katana_rpc_types::state_update::MaybePendingStateUpdate;
 use katana_rpc_types::transaction::Tx;
+use katana_rpc_types::trie::{ContractStorageKeys, GetStorageProofResponse};
 use starknet::core::types::{EventFilter, TransactionStatus};
 use starknet::providers::jsonrpc::HttpTransport;
-use starknet::providers::{JsonRpcClient, Provider, ProviderError};
+use starknet::providers::ProviderError as StarknetProviderError;
+use starknet::providers::{JsonRpcClient, Provider};
 use url::Url;
+// use katana_rpc_api::starknet::StarknetApiClient;
+use jsonrpsee::core::Error as JsonRpcseError;
+use starknet::core::types::{
+    BlockId, BlockTag, MaybePendingStateUpdate as StarknetRsMaybePendingStateUpdate,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Error originating from the underlying [`Provider`] implementation.
     #[error("Provider error: {0}")]
-    Provider(#[from] ProviderError),
+    Provider(#[from] StarknetProviderError),
 
     #[error("Block out of range")]
     BlockOutOfRange,
@@ -29,6 +39,14 @@ pub enum Error {
 
     #[error("Unexpected pending data")]
     UnexpectedPendingData,
+
+    /// Error from jsonrpsee client
+    #[error("JsonRPC client error: {0}")]
+    JsonRpc(#[from] JsonRpcseError),
+
+    /// Error from katana provider
+    #[error("Katana provider error: {0}")]
+    KatanaProvider(#[from] ProviderError),
 }
 
 #[derive(Debug)]
@@ -37,12 +55,14 @@ pub struct ForkedClient<P: Provider = JsonRpcClient<HttpTransport>> {
     block: BlockNumber,
     /// The Starknet Json RPC provider client for doing the request to the forked network.
     provider: P,
+    /// The URL of the forked network (only set when using JsonRpcClient<HttpTransport>).
+    url: Option<Url>,
 }
 
 impl<P: Provider> ForkedClient<P> {
     /// Creates a new forked client from the given [`Provider`] and block number.
     pub fn new(provider: P, block: BlockNumber) -> Self {
-        Self { provider, block }
+        Self { provider, block, url: None }
     }
 
     /// Returns the block number of the forked client.
@@ -54,7 +74,11 @@ impl<P: Provider> ForkedClient<P> {
 impl ForkedClient {
     /// Creates a new forked client from the given HTTP URL and block number.
     pub fn new_http(url: Url, block: BlockNumber) -> Self {
-        Self { provider: JsonRpcClient::new(HttpTransport::new(url)), block }
+        Self {
+            provider: JsonRpcClient::new(HttpTransport::new(url.clone())),
+            block,
+            url: Some(url),
+        }
     }
 }
 
@@ -295,18 +319,27 @@ impl From<Error> for StarknetApiError {
             Error::BlockTagNotAllowed | Error::UnexpectedPendingData => {
                 StarknetApiError::UnexpectedError { reason: value.to_string() }
             }
+            Error::JsonRpc(json_rpc_error) => {
+                StarknetApiError::UnexpectedError { reason: json_rpc_error.to_string() }
+            }
+            Error::KatanaProvider(provider_error) => provider_error.into(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use katana_primitives::felt;
+    use katana_rpc_types::trie::ContractStorageKeys;
     use url::Url;
 
     use super::*;
 
-    const SEPOLIA_URL: &str = "https://api.cartridge.gg/x/starknet/sepolia";
+    // const SEPOLIA_URL: &str = "https://api.cartridge.gg/x/starknet/sepolia";
+    const SEPOLIA_URL: &str = "https://rpc.starknet-testnet.lava.build:443";
+
     const FORK_BLOCK_NUMBER: BlockNumber = 268_471;
 
     #[tokio::test]
@@ -330,5 +363,125 @@ mod tests {
         let hash = felt!("0x335a605f2c91873f8f830a6e5285e704caec18503ca28c18485ea6f682eb65e");
         let err = client.get_block_number_by_hash(hash).await.expect_err("should return an error");
         assert!(matches!(err, Error::BlockOutOfRange));
+    }
+
+    #[tokio::test]
+    async fn test_get_storage_proof() {
+        let external_client = JsonRpcClient::new(HttpTransport::new(
+            Url::parse("https://api.cartridge.gg/x/starknet/sepolia").unwrap(),
+        ));
+        let block_number = external_client.block_number().await.unwrap();
+        println!("Block number: {:?}", block_number);
+
+        let url = Url::parse(SEPOLIA_URL).unwrap();
+        let client = ForkedClient::new_http(url.clone(), block_number);
+
+        // Create a simple StateUpdates object for testing
+        use katana_primitives::state::StateUpdates;
+        use katana_provider::providers::fork::ForkedProvider;
+        use katana_provider::traits::trie::TrieWriter;
+        use starknet::providers::jsonrpc::HttpTransport;
+        use starknet::providers::JsonRpcClient;
+        use std::collections::BTreeMap;
+
+        let contract_address =
+            felt!("0x06a4d4e8c1cc9785e125195a2f8bd4e5b0c7510b19f3e2dd63533524f5687e41").into();
+        let class_hash =
+            felt!("0x03d5de568b28042464214dfbe2ea0d7e22d162986bcdb9f56d691d22955a4c23");
+        let storage_key = felt!("0x1").into();
+        let storage_value = felt!("0x1").into();
+
+        let mut state_updates = StateUpdates::default();
+
+        // Add some sample data
+        state_updates.deployed_contracts.insert(contract_address, class_hash);
+        state_updates
+            .storage_updates
+            .insert(contract_address, BTreeMap::from([(storage_key, storage_value)]));
+        state_updates.declared_classes.insert(class_hash, felt!("0x123").into());
+
+        // Create the provider
+        let rpc_provider = Arc::new(JsonRpcClient::new(HttpTransport::new(url.clone())));
+        let forked_provider = ForkedProvider::new_ephemeral(
+            katana_primitives::block::BlockHashOrNumber::Num(block_number),
+            rpc_provider,
+            url.clone(),
+        );
+
+        let state_root = forked_provider.compute_state_root(block_number, &state_updates).unwrap();
+        println!("State root: {:?}", state_root);
+
+        let external_state_update =
+            external_client.get_state_update(BlockId::Tag(BlockTag::Latest)).await.unwrap();
+
+        let external_state_root = match external_state_update {
+            StarknetRsMaybePendingStateUpdate::Update(state_update) => {
+                println!("External new_root: {:#x}", state_update.new_root);
+                println!("External old_root: {:#x}", state_update.old_root);
+                println!("External block_hash: {:#x}", state_update.block_hash);
+                state_update.new_root
+            }
+            StarknetRsMaybePendingStateUpdate::PendingUpdate(pending) => {
+                println!("Pending state update - no state root available");
+                return;
+            }
+        };
+    }
+
+    #[tokio::test]
+    async fn compare_storage_roots() {
+        let katana = JsonRpcClient::new(HttpTransport::new(
+            Url::parse("http://localhost:5050").unwrap(),
+        ));
+        let forked_katana = JsonRpcClient::new(HttpTransport::new(
+            Url::parse("http://localhost:5051").unwrap(),
+        ));
+
+        let block_number = katana.block_number().await.unwrap();
+        println!("Block number: {:?}", block_number);
+
+        let katana_state_update =
+            katana.get_state_update(BlockId::Tag(BlockTag::Latest)).await.unwrap();
+        let forked_katana_state_update =
+            forked_katana.get_state_update(BlockId::Tag(BlockTag::Latest)).await.unwrap();
+
+        let katana_state_root = match katana_state_update {
+            StarknetRsMaybePendingStateUpdate::Update(state_update) => {
+                println!("Katana new_root: {:#x}", state_update.new_root);
+                println!("Katana old_root: {:#x}", state_update.old_root);
+                println!("Katana block_hash: {:#x}", state_update.block_hash);
+                println!("Katana state_diff: {:?}", state_update.state_diff);
+                state_update.new_root
+            }
+            StarknetRsMaybePendingStateUpdate::PendingUpdate(pending) => {
+                println!("Pending state update - no state root available");
+                return;
+            }
+        };
+
+        let forked_block_number = forked_katana.block_number().await.unwrap();
+        println!("\nForked block number: {:?}", forked_block_number);
+
+        let forked_katana_state_root = match forked_katana_state_update {
+            StarknetRsMaybePendingStateUpdate::Update(state_update) => {
+                println!("Forked katana new_root: {:#x}", state_update.new_root);
+                println!("Forked katana old_root: {:#x}", state_update.old_root);
+                println!("Forked katana block_hash: {:#x}", state_update.block_hash);
+                println!("Forked katana state_diff: {:?}", state_update.state_diff);
+                state_update.new_root
+            }
+            StarknetRsMaybePendingStateUpdate::PendingUpdate(pending) => {
+                println!("Pending state update - no state root available");
+                return;
+            }
+        };
+
+        let contract_address: ContractAddress =
+            felt!("0x127fd5f1fe78a71f8bcd1fec63e3fe2f0486b6ecd5c86a0466c3a21fa5cfcec").into();
+        let account_nonce = katana.get_nonce(BlockId::Tag(BlockTag::Latest), contract_address).await.unwrap();
+        println!("Account nonce: {:?}", account_nonce);
+
+        let forked_account_nonce = forked_katana.get_nonce(BlockId::Tag(BlockTag::Latest), contract_address).await.unwrap();
+        println!("Forked account nonce: {:?}", forked_account_nonce);
     }
 }

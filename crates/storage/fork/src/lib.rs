@@ -14,7 +14,7 @@ use futures::channel::mpsc::{channel as async_channel, Receiver, SendError, Send
 use futures::future::BoxFuture;
 use futures::stream::Stream;
 use futures::{Future, FutureExt};
-use katana_primitives::block::BlockHashOrNumber;
+use katana_primitives::block::{BlockHashOrNumber, BlockNumber};
 use katana_primitives::class::{
     ClassHash, CompiledClassHash, ComputeClassHashError, ContractClass,
     ContractClassCompilationError,
@@ -22,7 +22,9 @@ use katana_primitives::class::{
 use katana_primitives::contract::{ContractAddress, Nonce, StorageKey, StorageValue};
 use katana_primitives::Felt;
 use katana_rpc_types::class::RpcContractClass;
+use katana_rpc_types::trie::{ContractStorageKeys, GetStorageProofResponse};
 use parking_lot::Mutex;
+use serde_json;
 use starknet::core::types::{BlockId, ContractClass as StarknetRsClass, StarknetError};
 use starknet::providers::{Provider, ProviderError as StarknetProviderError};
 use tracing::{error, trace};
@@ -30,6 +32,15 @@ use tracing::{error, trace};
 const LOG_TARGET: &str = "forking::backend";
 
 type BackendResult<T> = Result<T, BackendError>;
+
+/// Payload for storage proof requests
+#[derive(Debug, Clone)]
+pub struct StorageProofPayload {
+    pub block_number: BlockNumber,
+    pub class_hashes: Option<Vec<ClassHash>>,
+    pub contract_addresses: Option<Vec<ContractAddress>>,
+    pub contracts_storage_keys: Option<Vec<ContractStorageKeys>>,
+}
 
 /// The types of response from [`Backend`].
 ///
@@ -45,6 +56,7 @@ enum BackendResponse {
     Storage(BackendResult<StorageValue>),
     ClassHashAt(BackendResult<ClassHash>),
     ClassAt(BackendResult<StarknetRsClass>),
+    StorageProof(BackendResult<GetStorageProofResponse>),
 }
 
 /// Errors that can occur when interacting with the backend.
@@ -72,6 +84,7 @@ enum BackendRequest {
     Class(Request<ClassHash>),
     ClassHash(Request<ContractAddress>),
     Storage(Request<(ContractAddress, StorageKey)>),
+    // StorageProof(Request<StorageProofPayload>),
     // Test-only request kind for requesting the backend stats
     #[cfg(test)]
     Stats(OneshotSender<usize>),
@@ -122,6 +135,7 @@ enum BackendRequestIdentifier {
     Class(ClassHash),
     ClassHash(ContractAddress),
     Storage((ContractAddress, StorageKey)),
+    // StorageProof(BlockNumber),
 }
 
 /// The backend for the forked provider.
@@ -269,7 +283,6 @@ where
                     }),
                 );
             }
-
             #[cfg(test)]
             BackendRequest::Stats(sender) => {
                 let total_ongoing_request = self.pending_requests.len();
