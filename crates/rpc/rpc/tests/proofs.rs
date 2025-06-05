@@ -82,6 +82,7 @@ async fn genesis_states() {
     };
 
     let genesis_states = chain_spec.state_updates();
+    println!("genesis nonce updates: {:?}", genesis_states.state_updates.nonce_updates);
 
     // We need to use the jsonrpsee client because `starknet-rs` doesn't yet support RPC 0.8.0
     let url = format!("http://{}", sequencer.rpc_addr());

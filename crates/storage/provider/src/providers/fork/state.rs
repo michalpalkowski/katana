@@ -104,8 +104,10 @@ where
 {
     fn nonce(&self, address: ContractAddress) -> ProviderResult<Option<Nonce>> {
         if let res @ Some(..) = self.provider.nonce(address)? {
+            println!("LatestStateProvider::nonce: Found nonce for address in db: {:?}", address);
             Ok(res)
         } else if let Some(nonce) = self.backend.get_nonce(address)? {
+            println!("LatestStateProvider::nonce: Found nonce for address in backend(rpc): {:?}", address);
             let class_hash = self
                 .backend
                 .get_class_hash_at(address)?
@@ -114,8 +116,16 @@ where
             let entry = GenericContractInfo { nonce, class_hash };
             self.db.db().tx_mut()?.put::<tables::ContractInfo>(address, entry)?;
 
+
+            //TODO :: THINK ABOUT THIS
+            // Also track nonce changes for state updates
+            let block = self.db.latest_number()?;
+            let nonce_entry = ContractNonceChange { contract_address: address, nonce };
+            self.db.db().tx_mut()?.put::<tables::NonceChangeHistory>(block, nonce_entry)?;
+
             Ok(Some(nonce))
         } else {
+            println!("LatestStateProvider::nonce: No nonce found for address: {:?}", address);
             Ok(None)
         }
     }
@@ -131,6 +141,7 @@ where
                 .backend
                 .get_nonce(address)?
                 .ok_or(ProviderError::MissingContractNonce { address })?;
+            
 
             let entry = GenericContractInfo { class_hash, nonce };
             self.db.db().tx_mut()?.put::<tables::ContractInfo>(address, entry)?;
