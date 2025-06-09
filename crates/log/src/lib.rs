@@ -1,7 +1,6 @@
 use opentelemetry_gcloud_trace::errors::GcloudTraceError;
 use tracing::subscriber::SetGlobalDefaultError;
 use tracing_log::log::SetLoggerError;
-use tracing_log::LogTracer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, EnvFilter, Layer};
@@ -81,7 +80,6 @@ pub async fn init(
             LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
         };
 
-        LogTracer::init()?;
         tracing_subscriber::registry().with(filter).with(fmt).init();
     }
 
