@@ -269,16 +269,16 @@ impl ClassCache {
                     let compiled_clone = compiled.clone();
 
                     pool.spawn(move || {
-                        tracing::trace!(target: "class_cache", class = format!("{hash:#x}"), "Compiling native class");
+                        let span = tracing::trace_span!(target: "class_cache", "compile_native_class", class = format!("{hash:#x}"));
+                        let _span = span.enter();
 
                         let executor =
                             AotContractExecutor::new(&program, &entry_points, version.into(), OptLevel::Default)
+                                .inspect_err(|error| tracing::error!(target: "class_cache", %error, "Failed to compile native class"))
                                 .unwrap();
 
                         let native = NativeCompiledClassV1::new(executor, compiled_clone);
                         inner.cache.insert(hash, RunnableCompiledClass::V1Native(native));
-
-                        tracing::trace!(target: "class_cache", class = format!("{hash:#x}"), "Native class compiled")
                     });
                 }
 
