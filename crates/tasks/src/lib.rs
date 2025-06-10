@@ -63,7 +63,11 @@ impl TokioTaskSpawner {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        self.tokio_handle.spawn_blocking(func)
+        let span = tracing::Span::current();
+        self.tokio_handle.spawn_blocking(move || {
+            let _guard = span.enter();
+            func()
+        })
     }
 }
 
@@ -133,7 +137,9 @@ impl BlockingTaskPool {
         R: Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
+        let span = tracing::Span::current();
         self.pool.spawn(move || {
+            let _guard = span.enter();
             let _ = tx.send(panic::catch_unwind(AssertUnwindSafe(func)));
         });
         BlockingTaskHandle(rx)
