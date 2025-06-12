@@ -28,7 +28,6 @@ use katana_provider::providers::db::DbProvider;
 use katana_provider::providers::fork::ForkedProvider;
 use katana_primitives::state::StateUpdates;
 use std::collections::BTreeMap;
-use katana_rpc_api::dev::DevApiClient;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::rpc_params;
 
