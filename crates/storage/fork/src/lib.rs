@@ -201,14 +201,11 @@ where
     }
 
     fn new_inner(provider: P, block_id: BlockHashOrNumber) -> (BackendClient, Backend<P>) {
-        println!("🔍 Backend::new_inner: block_id = {:?}", block_id);
 
         let block = match block_id {
             BlockHashOrNumber::Hash(hash) => BlockId::Hash(hash),
             BlockHashOrNumber::Num(number) => BlockId::Number(number),
         };
-
-        println!("🔍 Backend::new_inner: final block = {:?}", block);
 
         // Create async channel to receive requests from the handle.
         let (tx, rx) = async_channel(100);
