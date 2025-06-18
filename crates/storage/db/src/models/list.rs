@@ -46,6 +46,38 @@ impl IntegerSet {
         self.0.select(n)
     }
 
+    /// Returns the maximum value in the set (if the set is non-empty).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let mut is = IntegerSet::new();
+    /// assert_eq!(is.max(), None);
+    ///
+    /// is.insert(3);
+    /// is.insert(4);
+    /// assert_eq!(is.max(), Some(4));
+    /// ```
+    pub fn max(&self) -> Option<u64> {
+        self.0.max()
+    }
+
+    /// Returns the minimum value in the set (if the set is non-empty).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let mut is = IntegerSet::new();
+    /// assert_eq!(is.min(), None);
+    ///
+    /// is.insert(3);
+    /// is.insert(4);
+    /// assert_eq!(is.min(), Some(3));
+    /// ```
+    pub fn min(&self) -> Option<u64> {
+        self.0.min()
+    }
+
     /// Removes a range of values.
     ///
     /// # Returns
@@ -64,9 +96,34 @@ impl IntegerSet {
         self.0.remove_range(range)
     }
 
-    /// Returns an iterator over the elements of the set.
+    /// Iterator over each value stored in the [`IntegerSet`], guarantees values are ordered by
+    /// value.
     pub fn iter(&self) -> Iter<'_> {
         Iter { inner: self.0.iter() }
+    }
+
+    /// Returns the number of distinct integers added to the set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let mut is = IntegerSet::new();
+    /// assert_eq!(is.len(), 0);
+    ///
+    /// is.insert(3);
+    /// assert_eq!(is.len(), 1);
+    ///
+    /// is.insert(3);
+    /// is.insert(4);
+    /// assert_eq!(is.len(), 2);
+    /// ```
+    pub fn len(&self) -> u64 {
+        self.0.len()
+    }
+
+    /// Returns `true` if there are no integers in this set.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
