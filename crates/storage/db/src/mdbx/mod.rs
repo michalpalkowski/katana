@@ -268,7 +268,6 @@ impl Drop for DbEnv {
 #[cfg(test)]
 mod tests {
 
-    use katana_primitives::block::Header;
     use katana_primitives::contract::{ContractAddress, GenericContractInfo};
     use katana_primitives::{address, Felt};
     use starknet::macros::felt;
@@ -278,6 +277,7 @@ mod tests {
     use crate::codecs::Encode;
     use crate::mdbx::test_utils::create_test_db;
     use crate::models::storage::StorageEntry;
+    use crate::models::VersionedHeader;
     use crate::tables::{BlockHashes, ContractInfo, ContractStorage, Headers, Table};
 
     const ERROR_PUT: &str = "Not able to insert value into table.";
@@ -301,7 +301,7 @@ mod tests {
 
         // Insert some data to ensure non-zero stats
         let tx = env.tx_mut().expect(ERROR_INIT_TX);
-        tx.put::<Headers>(1u64, Header::default()).expect(ERROR_PUT);
+        tx.put::<Headers>(1u64, VersionedHeader::default()).expect(ERROR_PUT);
         tx.commit().expect(ERROR_COMMIT);
 
         // Retrieve stats
@@ -331,7 +331,7 @@ mod tests {
     fn db_manual_put_get() {
         let env = create_test_db();
 
-        let value = Header::default();
+        let value = VersionedHeader::default();
         let key = 1u64;
 
         // PUT
@@ -353,7 +353,7 @@ mod tests {
     fn db_delete() {
         let env = create_test_db();
 
-        let value = Header::default();
+        let value = VersionedHeader::default();
         let key = 1u64;
 
         // PUT
@@ -380,9 +380,9 @@ mod tests {
         let key1 = 1u64;
         let key2 = 2u64;
         let key3 = 3u64;
-        let header1 = Header::default();
-        let header2 = Header::default();
-        let header3 = Header::default();
+        let header1 = VersionedHeader::default();
+        let header2 = VersionedHeader::default();
+        let header3 = VersionedHeader::default();
 
         // PUT
         let tx = env.tx_mut().expect(ERROR_INIT_TX);
@@ -443,7 +443,7 @@ mod tests {
     fn db_cursor_walk() {
         let env = create_test_db();
 
-        let value = Header::default();
+        let value = VersionedHeader::default();
         let key = 1u64;
 
         // PUT
