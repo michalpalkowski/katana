@@ -130,10 +130,7 @@ where
         if let res @ Some(..) = self.provider.class_hash_of_contract(address)? {
             Ok(res)
         } else if let Some(class_hash) = self.backend.get_class_hash_at(address)? {
-            let nonce = self
-                .backend
-                .get_nonce(address)?
-                .unwrap_or(Felt::ZERO);
+            let nonce = self.backend.get_nonce(address)?.unwrap_or(Felt::ZERO);
 
             let entry = GenericContractInfo { class_hash, nonce };
             self.db.db().tx_mut()?.put::<tables::ContractInfo>(address, entry)?;
