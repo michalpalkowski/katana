@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::{anyhow, bail, Context, Result};
 use katana_db::mdbx::DbEnv;
 use katana_primitives::block::{

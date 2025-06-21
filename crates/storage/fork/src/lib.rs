@@ -27,7 +27,6 @@ use katana_primitives::Felt;
 use katana_rpc_types::class::RpcContractClass;
 use katana_rpc_types::trie::{ContractStorageKeys, GetStorageProofResponse};
 use parking_lot::Mutex;
-use serde_json;
 use starknet::core::types::{BlockId, ContractClass as StarknetRsClass, StarknetError};
 use starknet::providers::{Provider, ProviderError};
 use tracing::{error, trace};
