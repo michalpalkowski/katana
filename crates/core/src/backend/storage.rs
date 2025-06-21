@@ -1,6 +1,5 @@
-use std::sync::Arc;
-
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use katana_db::mdbx::DbEnv;
 use katana_primitives::block::{
     BlockHashOrNumber, BlockIdOrTag, BlockNumber, FinalityStatus, GasPrices, Header, SealedBlock,
     SealedBlockWithStatus,
