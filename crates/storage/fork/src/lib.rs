@@ -14,6 +14,8 @@ use futures::channel::mpsc::{channel as async_channel, Receiver, SendError, Send
 use futures::future::BoxFuture;
 use futures::stream::Stream;
 use futures::{Future, FutureExt};
+use jsonrpsee::core::client::ClientT;
+use jsonrpsee::http_client::HttpClientBuilder;
 use jsonrpsee::rpc_params;
 use katana_primitives::block::{BlockHashOrNumber, BlockIdOrTag, BlockNumber, BlockTag};
 use katana_primitives::class::{
@@ -29,8 +31,6 @@ use serde_json;
 use starknet::core::types::{BlockId, ContractClass as StarknetRsClass, StarknetError};
 use starknet::providers::{Provider, ProviderError};
 use tracing::{error, trace};
-use jsonrpsee::core::client::ClientT;
-use jsonrpsee::http_client::HttpClientBuilder;
 
 const LOG_TARGET: &str = "forking::backend";
 
@@ -124,7 +124,9 @@ impl BackendRequest {
         (BackendRequest::Storage(Request { payload: (address, key), sender }), receiver)
     }
 
-    fn storage_proof(payload: StorageProofPayload) -> (BackendRequest, OneshotReceiver<BackendResponse>) {
+    fn storage_proof(
+        payload: StorageProofPayload,
+    ) -> (BackendRequest, OneshotReceiver<BackendResponse>) {
         let (sender, rx) = oneshot();
         (BackendRequest::StorageProof(Request { payload, sender }), rx)
     }
@@ -201,7 +203,6 @@ where
     }
 
     fn new_inner(provider: P, block_id: BlockHashOrNumber) -> (BackendClient, Backend<P>) {
-
         let block = match block_id {
             BlockHashOrNumber::Hash(hash) => BlockId::Hash(hash),
             BlockHashOrNumber::Num(number) => BlockId::Number(number),
@@ -306,7 +307,7 @@ where
                         let client = HttpClientBuilder::default()
                             .build(&payload.fork_url)
                             .expect("failed to create HTTP client");
-                                
+
                         let res = client
                             .request(
                                 "starknet_getStorageProof",
