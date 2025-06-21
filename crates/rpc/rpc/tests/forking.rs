@@ -3,29 +3,29 @@ use assert_matches::assert_matches;
 use cainome::rs::abigen_legacy;
 use katana_node::config::fork::ForkingConfig;
 use katana_primitives::block::{BlockHash, BlockHashOrNumber, BlockIdOrTag, BlockNumber, BlockTag};
+use katana_primitives::block::{FinalityStatus, Header, SealedBlock, SealedBlockWithStatus};
 use katana_primitives::chain::NamedChainId;
 use katana_primitives::event::MaybeForkedContinuationToken;
-use katana_primitives::genesis::constant::DEFAULT_STRK_FEE_TOKEN_ADDRESS;
+use katana_primitives::genesis::constant::DEFAULT_ETH_FEE_TOKEN_ADDRESS;
+use katana_primitives::state::StateUpdates;
+use katana_primitives::state::StateUpdatesWithClasses;
 use katana_primitives::transaction::TxHash;
+use katana_primitives::ContractAddress;
 use katana_primitives::{felt, Felt};
 use katana_provider::providers::db::DbProvider;
+use katana_provider::providers::fork::ForkedProvider;
 use katana_provider::traits::block::BlockProvider;
+use katana_provider::traits::block::BlockWriter;
+use katana_provider::traits::state::StateProvider;
+use katana_provider::traits::trie::TrieWriter;
+use katana_provider::BlockchainProvider;
+use katana_runner::KatanaRunner;
 use katana_utils::TestNode;
 use starknet::core::types::{EventFilter, MaybePendingBlockWithTxHashes, StarknetError};
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::{JsonRpcClient, Provider, ProviderError};
-use url::Url;
-use katana_provider::providers::fork::ForkedProvider;
-use katana_provider::traits::state::StateProvider;
-use katana_primitives::state::StateUpdates;
-use katana_provider::traits::trie::TrieWriter;
-use katana_runner::KatanaRunner;
-use katana_provider::BlockchainProvider;
 use std::sync::Arc;
-use katana_primitives::ContractAddress;
-use katana_primitives::state::StateUpdatesWithClasses;
-use katana_primitives::block::{SealedBlock, SealedBlockWithStatus, Header, FinalityStatus};
-use katana_provider::traits::block::BlockWriter;
+use url::Url;
 
 mod common;
 
@@ -700,24 +700,23 @@ async fn test_fork_local_katana_network() -> Result<()> {
     let provider = runner.starknet_provider();
     let rpc_url = runner.instance.rpc_addr();
     let url = Url::parse(&format!("http://{}", rpc_url)).expect("invalid url");
-    
+
+    use katana_chain_spec::ChainSpec;
+    use katana_core::backend::gas_oracle::GasOracle;
+    use katana_core::backend::storage::Blockchain;
+    use katana_core::backend::Backend;
+    use katana_executor::implementation::noop::NoopExecutorFactory;
+    use katana_primitives::ContractAddress;
     use starknet::providers::JsonRpcClient;
     use std::collections::BTreeMap;
-    use katana_chain_spec::ChainSpec;
-    use katana_executor::implementation::noop::NoopExecutorFactory;
-    use katana_core::backend::storage::Blockchain;
-    use katana_core::backend::gas_oracle::GasOracle;
-    use katana_core::backend::Backend;
-    use katana_primitives::ContractAddress;
 
-    let external_client =
-        JsonRpcClient::new(HttpTransport::new(url.clone()));
+    let external_client = JsonRpcClient::new(HttpTransport::new(url.clone()));
 
     let current_block = external_client.block_number().await.unwrap();
-    
+
     println!("Started local Katana at: {}", url);
     println!("Current block: {}", current_block);
-    
+
     // Create a ForkedProvider that forks from the local network at block 0
     let forked_blockchain_provider = ForkedProvider::new_ephemeral(
         katana_primitives::block::BlockHashOrNumber::Num(0),
@@ -728,17 +727,17 @@ async fn test_fork_local_katana_network() -> Result<()> {
 
     let db_provider = DbProvider::new_ephemeral();
     let mainnet_blockchain_provider = BlockchainProvider::new(db_provider);
-    
+
     // Step A: Copy the genesis state from Katana network to DB blockchain
     println!("Copying genesis state from Katana network to DB blockchain...");
-    
-    // Get the genesis block from Katana network  
+
+    // Get the genesis block from Katana network
     let katana_genesis_block = provider.get_block_with_tx_hashes(BlockIdOrTag::Number(0)).await?;
     let katana_genesis = match katana_genesis_block {
         starknet::core::types::MaybePendingBlockWithTxHashes::Block(block) => block,
         _ => panic!("Expected genesis block"),
     };
-    
+
     // Create equivalent genesis block for DB blockchain
     let genesis_sealed_block = SealedBlockWithStatus {
         status: FinalityStatus::AcceptedOnL2,
@@ -766,7 +765,7 @@ async fn test_fork_local_katana_network() -> Result<()> {
             body: Default::default(),
         },
     };
-    
+
     // Insert genesis block into DB blockchain
     mainnet_blockchain_provider.insert_block_with_states_and_receipts(
         genesis_sealed_block,
@@ -774,33 +773,34 @@ async fn test_fork_local_katana_network() -> Result<()> {
         vec![],
         vec![],
     )?;
-    
+
     println!("Inserted genesis block into DB blockchain");
-    
+
     // Step B: Test that ForkedProvider can fetch missing state from network
     let eth_contract_address: ContractAddress = DEFAULT_ETH_FEE_TOKEN_ADDRESS.into();
     // let some_storage_key = felt!("0x1").into();
-    
+
     // // This should work because ForkedProvider will fetch from network
     // let katana_eth_storage = blockchain_provider.storage(eth_contract_address, some_storage_key)?;
     // println!("ETH contract storage from ForkedProvider: {:?}", katana_eth_storage);
-    
+
     // Step C: Apply identical state updates and compare
     let mut identical_state_updates = StateUpdates::default();
     let test_contract = felt!("0x999").into();
-    identical_state_updates.storage_updates.insert(
-        test_contract,
-        BTreeMap::from([(felt!("0x123").into(), felt!("0x456").into())])
-    );
-    
-    let katana_state_root = blockchain_provider.compute_state_root(current_block, &identical_state_updates)?;
-    let db_state_root = mainnet_blockchain_provider.compute_state_root(0, &identical_state_updates)?;
-    
+    identical_state_updates
+        .storage_updates
+        .insert(test_contract, BTreeMap::from([(felt!("0x123").into(), felt!("0x456").into())]));
+
+    let katana_state_root =
+        blockchain_provider.compute_state_root(current_block, &identical_state_updates)?;
+    let db_state_root =
+        mainnet_blockchain_provider.compute_state_root(0, &identical_state_updates)?;
+
     println!("State roots with identical updates:");
     println!("  Katana ForkedProvider: {:?}", katana_state_root);
     println!("  DB blockchain: {:?}", db_state_root);
-    
+
     println!("✅ Successfully demonstrated ForkedProvider lazy loading!");
-    
+
     Ok(())
 }
