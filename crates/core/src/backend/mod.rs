@@ -24,7 +24,7 @@ use katana_provider::traits::trie::TrieWriter;
 use katana_trie::bonsai::databases::HashMapDb;
 use katana_trie::{
     compute_contract_state_hash, compute_merkle_root, ClassesTrie, CommitId, ContractLeaf,
-    ContractsTrie, StoragesTrie,
+    ContractsTrie, MultiProof, StoragesTrie,
 };
 use parking_lot::RwLock;
 use rayon::prelude::*;
@@ -74,9 +74,9 @@ impl<EF> Backend<EF> {
 }
 
 impl<EF: ExecutorFactory> Backend<EF> {
-    pub fn init_genesis(&self) -> anyhow::Result<()> {
+    pub fn init_genesis(&self, is_forked: bool) -> anyhow::Result<()> {
         match self.chain_spec.as_ref() {
-            ChainSpec::Dev(cs) => self.init_dev_genesis(cs),
+            ChainSpec::Dev(cs) => self.init_dev_genesis(cs, is_forked),
             ChainSpec::Rollup(cs) => self.init_rollup_genesis(cs),
         }
     }
@@ -186,6 +186,7 @@ impl<EF: ExecutorFactory> Backend<EF> {
     fn init_dev_genesis(
         &self,
         chain_spec: &katana_chain_spec::dev::ChainSpec,
+        is_forked: bool,
     ) -> anyhow::Result<()> {
         let provider = self.blockchain.provider();
 
@@ -203,33 +204,66 @@ impl<EF: ExecutorFactory> Backend<EF> {
 
             info!("Genesis has already been initialized");
         } else {
-            // Initialize the dev genesis block
+            if is_forked {
+                // In forked mode, we need to insert the forked block into local database
+                // The genesis block in chain_spec is already set to the forked block data
+                info!("Initializing forked genesis block from RPC data");
 
-            let block = chain_spec.block().seal();
-            let block = SealedBlockWithStatus { block, status: FinalityStatus::AcceptedOnL1 };
-            let states = chain_spec.state_updates();
+                let block = chain_spec.block().seal();
+                let mut block =
+                    SealedBlockWithStatus { block, status: FinalityStatus::AcceptedOnL1 };
+                let block_number = block.block.header.number;
+                let empty_states = StateUpdatesWithClasses::default();
 
-            let mut block = block;
-            let block_number = block.block.header.number;
+                let genesis_state_root = self
+                    .blockchain
+                    .provider()
+                    .compute_state_root(block_number, &empty_states.state_updates)?;
+                println!("genesis_state_root: {:?}", genesis_state_root);
 
-            let class_trie_root = provider
-                .trie_insert_declared_classes(block_number, &states.state_updates.declared_classes)
-                .context("failed to update class trie")?;
+                block.block.header.state_root = genesis_state_root;
 
-            let contract_trie_root = provider
-                .trie_insert_contract_updates(block_number, &states.state_updates)
-                .context("failed to update contract trie")?;
+                // Insert the forked block with empty state (no dev accounts)
+                // State will be fetched from RPC as needed
 
-            let genesis_state_root = hash::Poseidon::hash_array(&[
-                short_string!("STARKNET_STATE_V0"),
-                contract_trie_root,
-                class_trie_root,
-            ]);
+                provider.insert_block_with_states_and_receipts(
+                    block,
+                    empty_states,
+                    vec![],
+                    vec![],
+                )?;
+                info!("Forked genesis block inserted from RPC");
+            } else {
+                // Initialize the dev genesis block with dev accounts
+                let block = chain_spec.block().seal();
+                let block = SealedBlockWithStatus { block, status: FinalityStatus::AcceptedOnL1 };
+                let states = chain_spec.state_updates();
 
-            block.block.header.state_root = genesis_state_root;
-            provider.insert_block_with_states_and_receipts(block, states, vec![], vec![])?;
+                let mut block = block;
+                let block_number = block.block.header.number;
 
-            info!("Genesis initialized");
+                let class_trie_root = provider
+                    .trie_insert_declared_classes(
+                        block_number,
+                        &states.state_updates.declared_classes,
+                    )
+                    .context("failed to update class trie")?;
+
+                let contract_trie_root = provider
+                    .trie_insert_contract_updates(block_number, &states.state_updates)
+                    .context("failed to update contract trie")?;
+
+                let genesis_state_root = hash::Poseidon::hash_array(&[
+                    short_string!("STARKNET_STATE_V0"),
+                    contract_trie_root,
+                    class_trie_root,
+                ]);
+
+                block.block.header.state_root = genesis_state_root;
+
+                provider.insert_block_with_states_and_receipts(block, states, vec![], vec![])?;
+                info!("Genesis initialized with dev accounts");
+            }
         }
 
         Ok(())
@@ -477,21 +511,9 @@ impl<'a, P: TrieWriter> UncommittedBlock<'a, P> {
 
     // state_commitment = hPos("STARKNET_STATE_V0", contract_trie_root, class_trie_root)
     fn compute_new_state_root(&self) -> Felt {
-        let class_trie_root = self
-            .provider
-            .trie_insert_declared_classes(self.header.number, &self.state_updates.declared_classes)
-            .expect("failed to update class trie");
-
-        let contract_trie_root = self
-            .provider
-            .trie_insert_contract_updates(self.header.number, self.state_updates)
-            .expect("failed to update contract trie");
-
-        hash::Poseidon::hash_array(&[
-            short_string!("STARKNET_STATE_V0"),
-            contract_trie_root,
-            class_trie_root,
-        ])
+        self.provider
+            .compute_state_root(self.header.number, self.state_updates)
+            .expect("failed to compute state root")
     }
 }
 
@@ -559,49 +581,8 @@ impl TrieWriter for GenesisTrieWriter {
         state_updates: &StateUpdates,
     ) -> katana_provider::ProviderResult<Felt> {
         let mut contract_trie_db = ContractsTrie::new(HashMapDb::<CommitId>::default());
-        let mut contract_leafs: HashMap<ContractAddress, ContractLeaf> = HashMap::new();
 
-        let leaf_hashes = {
-            for (address, nonce) in &state_updates.nonce_updates {
-                contract_leafs.entry(*address).or_default().nonce = Some(*nonce);
-            }
-
-            for (address, class_hash) in &state_updates.deployed_contracts {
-                contract_leafs.entry(*address).or_default().class_hash = Some(*class_hash);
-            }
-
-            for (address, class_hash) in &state_updates.replaced_classes {
-                contract_leafs.entry(*address).or_default().class_hash = Some(*class_hash);
-            }
-
-            for (address, storage_entries) in &state_updates.storage_updates {
-                let mut storage_trie_db =
-                    StoragesTrie::new(HashMapDb::<CommitId>::default(), *address);
-
-                for (key, value) in storage_entries {
-                    storage_trie_db.insert(*key, *value);
-                }
-
-                // Then we commit them
-                storage_trie_db.commit(block_number);
-                let storage_root = storage_trie_db.root();
-
-                // insert the contract address in the contract_leafs to put the storage root
-                // later
-                contract_leafs.entry(*address).or_default().storage_root = Some(storage_root);
-            }
-
-            contract_leafs
-                .into_iter()
-                .map(|(address, leaf)| {
-                    let class_hash = leaf.class_hash.unwrap();
-                    let nonce = leaf.nonce.unwrap_or_default();
-                    let storage_root = leaf.storage_root.unwrap_or_default();
-                    let leaf_hash = compute_contract_state_hash(&class_hash, &storage_root, &nonce);
-                    (address, leaf_hash)
-                })
-                .collect::<Vec<_>>()
-        };
+        let leaf_hashes = self.build_contract_leaf_hashes(state_updates, block_number);
 
         for (k, v) in leaf_hashes {
             contract_trie_db.insert(k, v);
@@ -624,5 +605,92 @@ impl TrieWriter for GenesisTrieWriter {
 
         trie.commit(block_number);
         Ok(trie.root())
+    }
+
+    fn trie_insert_contract_updates_with_proof(
+        &self,
+        block_number: BlockNumber,
+        state_updates: &StateUpdates,
+        proof: MultiProof,
+        original_root: Felt,
+        _: HashMap<ContractAddress, ContractLeaf>,
+        _: Vec<MultiProof>,
+    ) -> katana_provider::ProviderResult<Felt> {
+        let mut contract_trie_db = ContractsTrie::new_partial(HashMapDb::<CommitId>::default());
+
+        let leaf_hashes = self.build_contract_leaf_hashes(state_updates, block_number);
+
+        for (k, v) in leaf_hashes {
+            contract_trie_db.insert(k, v, proof.clone(), original_root);
+        }
+
+        contract_trie_db.commit(block_number);
+        Ok(contract_trie_db.root())
+    }
+
+    fn trie_insert_declared_classes_with_proof(
+        &self,
+        block_number: BlockNumber,
+        updates: &BTreeMap<ClassHash, CompiledClassHash>,
+        proof: MultiProof,
+        original_root: Felt,
+    ) -> katana_provider::ProviderResult<Felt> {
+        let mut trie = ClassesTrie::new_partial(HashMapDb::default());
+
+        for (class_hash, compiled_hash) in updates {
+            trie.insert(*class_hash, *compiled_hash, proof.clone(), original_root);
+        }
+
+        trie.commit(block_number);
+        Ok(trie.root())
+    }
+}
+
+impl GenesisTrieWriter {
+    fn build_contract_leaf_hashes(
+        &self,
+        state_updates: &StateUpdates,
+        block_number: BlockNumber,
+    ) -> Vec<(ContractAddress, Felt)> {
+        let mut contract_leafs: HashMap<ContractAddress, ContractLeaf> = HashMap::new();
+
+        for (address, nonce) in &state_updates.nonce_updates {
+            contract_leafs.entry(*address).or_default().nonce = Some(*nonce);
+        }
+
+        for (address, class_hash) in &state_updates.deployed_contracts {
+            contract_leafs.entry(*address).or_default().class_hash = Some(*class_hash);
+        }
+
+        for (address, class_hash) in &state_updates.replaced_classes {
+            contract_leafs.entry(*address).or_default().class_hash = Some(*class_hash);
+        }
+
+        for (address, storage_entries) in &state_updates.storage_updates {
+            let mut storage_trie_db = StoragesTrie::new(HashMapDb::<CommitId>::default(), *address);
+
+            for (key, value) in storage_entries {
+                storage_trie_db.insert(*key, *value);
+            }
+
+            // Then we commit them
+            storage_trie_db.commit(block_number);
+            let storage_root = storage_trie_db.root();
+
+            // insert the contract address in the contract_leafs to put the storage root
+            // later
+            contract_leafs.entry(*address).or_default().storage_root = Some(storage_root);
+        }
+
+        contract_leafs
+            .into_iter()
+            .map(|(address, leaf)| {
+                let class_hash = leaf.class_hash.unwrap();
+                let nonce = leaf.nonce.unwrap_or_default();
+                let storage_root = leaf.storage_root.unwrap_or_default();
+                let leaf_hash = compute_contract_state_hash(&class_hash, &storage_root, &nonce);
+                (address, leaf_hash)
+            })
+            .collect::<Vec<_>>()
     }
 }

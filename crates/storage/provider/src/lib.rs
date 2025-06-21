@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
 
@@ -15,6 +15,8 @@ use katana_primitives::state::{StateUpdates, StateUpdatesWithClasses};
 use katana_primitives::trace::TxExecInfo;
 use katana_primitives::transaction::{TxHash, TxNumber, TxWithHash};
 use katana_primitives::Felt;
+use katana_rpc_types::trie::ContractLeafData;
+use katana_trie::ContractLeaf;
 use traits::block::{BlockIdReader, BlockStatusProvider, BlockWriter};
 use traits::contract::ContractClassWriter;
 use traits::env::BlockEnvProvider;
@@ -359,6 +361,48 @@ where
         state_updates: &StateUpdates,
     ) -> ProviderResult<Felt> {
         self.provider.trie_insert_contract_updates(block_number, state_updates)
+    }
+
+    fn trie_insert_declared_classes_with_proof(
+        &self,
+        block_number: BlockNumber,
+        updates: &BTreeMap<ClassHash, CompiledClassHash>,
+        proof: katana_trie::MultiProof,
+        original_root: Felt,
+    ) -> ProviderResult<Felt> {
+        self.provider.trie_insert_declared_classes_with_proof(
+            block_number,
+            updates,
+            proof,
+            original_root,
+        )
+    }
+
+    fn trie_insert_contract_updates_with_proof(
+        &self,
+        block_number: BlockNumber,
+        state_updates: &StateUpdates,
+        proof: katana_trie::MultiProof,
+        original_root: Felt,
+        contract_addresses: HashMap<ContractAddress, ContractLeaf>,
+        contracts_storage_proofs: Vec<katana_trie::MultiProof>,
+    ) -> ProviderResult<Felt> {
+        self.provider.trie_insert_contract_updates_with_proof(
+            block_number,
+            state_updates,
+            proof,
+            original_root,
+            contract_addresses,
+            contracts_storage_proofs,
+        )
+    }
+
+    fn compute_state_root(
+        &self,
+        block_number: BlockNumber,
+        state_updates: &StateUpdates,
+    ) -> ProviderResult<Felt> {
+        self.provider.compute_state_root(block_number, state_updates)
     }
 }
 

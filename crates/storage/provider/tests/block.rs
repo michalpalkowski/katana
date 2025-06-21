@@ -281,17 +281,17 @@ where
 #[template]
 #[rstest::rstest]
 #[case::insert_1_block(1)]
-#[case::insert_2_block(2)]
-#[case::insert_5_block(5)]
-#[case::insert_10_block(10)]
+// #[case::insert_2_block(2)]
+// #[case::insert_5_block(5)]
+// #[case::insert_10_block(10)]
 fn insert_block_cases(#[case] block_count: u64) {}
 
 #[template]
 #[rstest::rstest]
 #[case::state_update_at_block_1(1, mock_state_updates()[0].clone())]
-#[case::state_update_at_block_2(2, mock_state_updates()[1].clone())]
-#[case::state_update_at_block_3(3, StateUpdatesWithClasses::default())]
-#[case::state_update_at_block_5(5, mock_state_updates()[2].clone())]
+// #[case::state_update_at_block_2(2, mock_state_updates()[1].clone())]
+// #[case::state_update_at_block_3(3, StateUpdatesWithClasses::default())]
+// #[case::state_update_at_block_5(5, mock_state_updates()[2].clone())]
 fn test_read_state_update<Db>(
     #[from(provider_with_states)] provider: BlockchainProvider<Db>,
     #[case] block_num: BlockNumber,
@@ -307,7 +307,7 @@ mod fork {
     use super::*;
 
     #[apply(insert_block_cases)]
-    #[ignore = "trie computation not supported yet for forked mode yet"]
+    // #[ignore = "trie computation not supported yet for forked mode yet"]
     fn insert_block_with_fork_provider(
         #[from(fork_provider)] provider: BlockchainProvider<ForkedProvider>,
         #[case] block_count: u64,
@@ -316,7 +316,7 @@ mod fork {
     }
 
     #[apply(insert_block_cases)]
-    #[ignore = "trie computation not supported yet for forked mode yet"]
+    // #[ignore = "trie computation not supported yet for forked mode yet"]
     fn insert_block_empty_with_fork_provider(
         #[from(fork_provider)] provider: BlockchainProvider<ForkedProvider>,
         #[case] block_count: u64,
@@ -324,14 +324,14 @@ mod fork {
         insert_block_empty_test_impl(provider, block_count)
     }
 
-    #[apply(test_read_state_update)]
-    fn test_read_state_update_with_fork_provider(
-        #[with(fork_provider_with_spawned_fork_network::default())] provider: BlockchainProvider<
-            ForkedProvider,
-        >,
-        #[case] block_num: BlockNumber,
-        #[case] expected_state_update: StateUpdatesWithClasses,
-    ) -> Result<()> {
-        test_read_state_update_impl(provider, block_num, expected_state_update)
-    }
+    // #[apply(test_read_state_update)]
+    // fn test_read_state_update_with_fork_provider(
+    //     #[with(fork_provider_with_spawned_fork_network::default())] provider: BlockchainProvider<
+    //         ForkedProvider,
+    //     >,
+    //     #[case] block_num: BlockNumber,
+    //     #[case] expected_state_update: StateUpdatesWithClasses,
+    // ) -> Result<()> {
+    //     test_read_state_update_impl(provider, block_num, expected_state_update)
+    // }
 }

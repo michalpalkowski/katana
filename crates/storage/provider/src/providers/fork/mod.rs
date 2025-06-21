@@ -19,6 +19,7 @@ use katana_primitives::trace::TxExecInfo;
 use katana_primitives::transaction::{TxHash, TxNumber, TxWithHash};
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::JsonRpcClient;
+use url::Url;
 
 use super::db::{self, DbProvider};
 use crate::traits::block::{
@@ -41,21 +42,27 @@ mod trie;
 pub struct ForkedProvider<Db: Database = DbEnv> {
     backend: BackendClient,
     provider: Arc<DbProvider<Db>>,
+    fork_url: Url,
 }
 
 impl<Db: Database> ForkedProvider<Db> {
     pub fn new(
         db: Db,
         block_id: BlockHashOrNumber,
-        provider: Arc<JsonRpcClient<HttpTransport>>,
+        provider: JsonRpcClient<HttpTransport>,
+        fork_url: Url,
     ) -> Self {
-        let backend = Backend::new(provider, block_id).expect("failed to create backend");
-        let provider = Arc::new(DbProvider::new(db));
-        Self { provider, backend }
+        let backend = Backend::new(provider.clone(), block_id).expect("failed to create backend");
+        let db_provider = Arc::new(DbProvider::new(db));
+        Self { provider: db_provider, backend, fork_url }
     }
 
     pub fn backend(&self) -> &BackendClient {
         &self.backend
+    }
+
+    pub fn fork_url(&self) -> &Url {
+        &self.fork_url
     }
 }
 
@@ -64,10 +71,11 @@ impl ForkedProvider<DbEnv> {
     pub fn new_ephemeral(
         block_id: BlockHashOrNumber,
         provider: Arc<JsonRpcClient<HttpTransport>>,
+        fork_url: Url,
     ) -> Self {
-        let backend = Backend::new(provider, block_id).expect("failed to create backend");
-        let provider = Arc::new(DbProvider::new_ephemeral());
-        Self { provider, backend }
+        let backend = Backend::new(provider.clone(), block_id).expect("failed to create backend");
+        let db_provider = Arc::new(DbProvider::new_ephemeral());
+        Self { provider: db_provider, backend, fork_url }
     }
 }
 
