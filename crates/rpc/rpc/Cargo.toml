@@ -47,7 +47,6 @@ katana-utils.workspace = true
 katana-db.workspace = true
 katana-runner.workspace = true
 
-# Remove git alloy and use workspace dependencies instead
 alloy-contract.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true

@@ -133,7 +133,6 @@ where
             let nonce = self
                 .backend
                 .get_nonce(address)?
-                // .ok_or(ProviderError::MissingContractNonce { address })?;
                 .unwrap_or(Felt::ZERO);
 
             let entry = GenericContractInfo { class_hash, nonce };

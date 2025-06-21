@@ -259,11 +259,6 @@ impl<EF: ExecutorFactory> Backend<EF> {
                     class_trie_root,
                 ]);
 
-                // let genesis_state_root = self
-                //     .blockchain
-                //     .provider()
-                //     .compute_state_root(block_number, &states.state_updates)?;
-
                 block.block.header.state_root = genesis_state_root;
 
                 provider.insert_block_with_states_and_receipts(block, states, vec![], vec![])?;
@@ -659,8 +654,8 @@ impl TrieWriter for GenesisTrieWriter {
         state_updates: &StateUpdates,
         proof: MultiProof,
         original_root: Felt,
-        contract_addresses: HashMap<ContractAddress, ContractLeaf>,
-        contracts_storage_proofs: Vec<MultiProof>,
+        _: HashMap<ContractAddress, ContractLeaf>,
+        _: Vec<MultiProof>,
     ) -> katana_provider::ProviderResult<Felt> {
         let mut contract_trie_db = ContractsTrie::new_partial(HashMapDb::<CommitId>::default());
         let mut contract_leafs: HashMap<ContractAddress, ContractLeaf> = HashMap::new();

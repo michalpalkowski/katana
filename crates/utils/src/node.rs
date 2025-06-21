@@ -103,11 +103,11 @@ pub fn test_config() -> Config {
     chain.genesis.sequencer_address = address!("0x1");
 
     let rpc = RpcConfig {
-        port: 5052,
+        port: 0,
         addr: DEFAULT_RPC_ADDR,
         apis: RpcModulesList::all(),
-        max_proof_keys: Some(1000),
-        max_event_page_size: Some(1000),
+        max_proof_keys: Some(100),
+        max_event_page_size: Some(100),
         ..Default::default()
     };
 
