@@ -1,4 +1,4 @@
-use jsonrpsee::core::Error as JsonRpcseError;
+use jsonrpsee::core::ClientError as JsonRpcError;
 use katana_primitives::block::{BlockHash, BlockIdOrTag, BlockNumber};
 use katana_primitives::contract::ContractAddress;
 use katana_primitives::transaction::TxHash;
@@ -35,7 +35,7 @@ pub enum Error {
 
     /// Error from jsonrpsee client
     #[error("JsonRPC client error: {0}")]
-    JsonRpc(#[from] JsonRpcseError),
+    JsonRpc(#[from] JsonRpcError),
 
     /// Error from katana provider
     #[error("Katana provider error: {0}")]
