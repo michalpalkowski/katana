@@ -39,7 +39,8 @@ pub mod fork {
         pub static ref FORKED_PROVIDER: (KatanaRunner, Arc<JsonRpcClient<HttpTransport>>, Url) = {
             let runner = katana_runner::KatanaRunner::new().unwrap();
             let provider = runner.starknet_provider();
-            let rpc_url = runner.instance.rpc_addr();
+            let instance = runner.instance();
+            let rpc_url = instance.rpc_addr();
             let url = Url::parse(&format!("http://{}", rpc_url)).expect("invalid url");
             (runner, Arc::new(provider), url)
         };
