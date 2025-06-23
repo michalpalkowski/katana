@@ -117,6 +117,7 @@ impl Node {
             }
 
             let global_class_cache = class_cache.build_global()?;
+            // let global_class_cache = ClassCache::new()?;
 
             let mut factory = BlockifierFactory::new(
                 cfg_env,
@@ -199,7 +200,7 @@ impl Node {
             chain_spec: config.chain.clone(),
         });
 
-        backend.init_genesis().context("failed to initialize genesis")?;
+        backend.init_genesis(config.forking.is_some()).context("failed to initialize genesis")?;
 
         // --- build block producer
 

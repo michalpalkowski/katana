@@ -96,7 +96,6 @@ impl<Db: Database> TrieWriter for DbProvider<Db> {
             for (k, v) in leaf_hashes {
                 contract_trie_db.insert(k, v);
             }
-
             contract_trie_db.commit(block_number);
             Ok(contract_trie_db.root())
         })?
@@ -104,14 +103,13 @@ impl<Db: Database> TrieWriter for DbProvider<Db> {
 }
 
 // computes the contract state leaf hash
-fn contract_state_leaf_hash(
+pub fn contract_state_leaf_hash(
     provider: impl StateProvider,
     address: &ContractAddress,
     contract_leaf: &ContractLeaf,
 ) -> Felt {
     let nonce =
         contract_leaf.nonce.unwrap_or(provider.nonce(*address).unwrap().unwrap_or_default());
-
     let class_hash = contract_leaf
         .class_hash
         .unwrap_or(provider.class_hash_of_contract(*address).unwrap().unwrap_or_default());

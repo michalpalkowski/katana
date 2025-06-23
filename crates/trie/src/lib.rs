@@ -23,13 +23,19 @@ pub use storages::StoragesTrie;
 /// having to handle how to transform the keys into the internal keys used by the trie.
 /// This struct is not meant to be used directly, and instead use the specific tries that have
 /// been derived from it, [`ClassesTrie`], [`ContractsTrie`], or [`StoragesTrie`].
-pub struct BonsaiTrie<DB, Hash = Pedersen>
-where
+///
+pub struct BonsaiTrie<
+    DB,
+    Hash = Pedersen,
+    T = bonsai_trie::trie::trees::FullMerkleTrees<Hash, DB, CommitId>,
+> where
     DB: BonsaiDatabase,
     Hash: StarkHash + Send + Sync,
 {
-    storage: BonsaiStorage<CommitId, DB, Hash>,
+    storage: BonsaiStorage<CommitId, DB, Hash, T>,
 }
+type PartialBonsaiTrie<DB, Hash = Pedersen> =
+    BonsaiTrie<DB, Hash, bonsai_trie::trie::trees::PartialMerkleTrees<Hash, DB, CommitId>>;
 
 impl<DB, Hash> BonsaiTrie<DB, Hash>
 where
@@ -53,6 +59,22 @@ where
     }
 }
 
+impl<DB, Hash> PartialBonsaiTrie<DB, Hash>
+where
+    DB: BonsaiDatabase,
+    Hash: StarkHash + Send + Sync,
+{
+    pub fn new_partial(db: DB) -> Self {
+        let config = BonsaiStorageConfig {
+            max_saved_trie_logs: Some(0),
+            max_saved_snapshots: Some(64usize),
+            snapshot_interval: 1,
+        };
+
+        Self { storage: BonsaiStorage::new_partial(db, config, 251) }
+    }
+}
+
 impl<DB, Hash> BonsaiTrie<DB, Hash>
 where
     DB: BonsaiDatabase,
@@ -68,6 +90,16 @@ where
     }
 }
 
+impl<DB, Hash> PartialBonsaiTrie<DB, Hash>
+where
+    DB: BonsaiDatabase,
+    Hash: StarkHash + Send + Sync,
+{
+    pub fn root(&self, id: &[u8]) -> Felt {
+        self.storage.root_hash(id).expect("failed to get trie root")
+    }
+}
+
 impl<DB, Hash> BonsaiTrie<DB, Hash>
 where
     DB: BonsaiDatabase + BonsaiPersistentDatabase<CommitId>,
@@ -76,6 +108,28 @@ where
     pub fn insert(&mut self, id: &[u8], key: Felt, value: Felt) {
         let key: BitVec = key.to_bytes_be().as_bits()[5..].to_owned();
         self.storage.insert(id, &key, &value).unwrap();
+    }
+
+    pub fn commit(&mut self, id: CommitId) {
+        self.storage.commit(id).expect("failed to commit trie");
+    }
+}
+
+impl<DB, Hash> PartialBonsaiTrie<DB, Hash>
+where
+    DB: BonsaiDatabase + BonsaiPersistentDatabase<CommitId>,
+    Hash: StarkHash + Send + Sync,
+{
+    pub fn insert(
+        &mut self,
+        id: &[u8],
+        key: Felt,
+        value: Felt,
+        proof: MultiProof,
+        original_root: Felt,
+    ) {
+        let key: BitVec = key.to_bytes_be().as_bits()[5..].to_owned();
+        self.storage.insert_with_proof(id, &key, &value, proof, original_root).unwrap();
     }
 
     pub fn commit(&mut self, id: CommitId) {
