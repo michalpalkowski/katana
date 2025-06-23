@@ -72,7 +72,7 @@ pub enum BackendError {
     #[error("unexpected received result: {0}")]
     UnexpectedReceiveResult(Arc<anyhow::Error>),
     #[error("jsonrpsee error: {0}")]
-    JsonrpseeError(#[from] Arc<jsonrpsee::core::Error>),
+    JsonrpseeError(#[from] Arc<jsonrpsee::core::ClientError>),
 }
 
 struct Request<P> {
