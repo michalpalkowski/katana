@@ -14,7 +14,10 @@ use futures::channel::mpsc::{channel as async_channel, Receiver, SendError, Send
 use futures::future::BoxFuture;
 use futures::stream::Stream;
 use futures::{Future, FutureExt};
-use katana_primitives::block::BlockHashOrNumber;
+use jsonrpsee::core::client::ClientT;
+use jsonrpsee::http_client::HttpClientBuilder;
+use jsonrpsee::rpc_params;
+use katana_primitives::block::{BlockHashOrNumber, BlockIdOrTag, BlockNumber, BlockTag};
 use katana_primitives::class::{
     ClassHash, CompiledClassHash, ComputeClassHashError, ContractClass,
     ContractClassCompilationError,
@@ -22,14 +25,25 @@ use katana_primitives::class::{
 use katana_primitives::contract::{ContractAddress, Nonce, StorageKey, StorageValue};
 use katana_primitives::Felt;
 use katana_rpc_types::class::RpcContractClass;
+use katana_rpc_types::trie::{ContractStorageKeys, GetStorageProofResponse};
 use parking_lot::Mutex;
 use starknet::core::types::{BlockId, ContractClass as StarknetRsClass, StarknetError};
-use starknet::providers::{Provider, ProviderError as StarknetProviderError};
+use starknet::providers::{Provider, ProviderError};
 use tracing::{error, trace};
 
 const LOG_TARGET: &str = "forking::backend";
 
 type BackendResult<T> = Result<T, BackendError>;
+
+/// Payload for storage proof requests
+#[derive(Debug, Clone)]
+pub struct StorageProofPayload {
+    pub block_number: BlockNumber,
+    pub class_hashes: Option<Vec<ClassHash>>,
+    pub contract_addresses: Option<Vec<ContractAddress>>,
+    pub contracts_storage_keys: Option<Vec<ContractStorageKeys>>,
+    pub fork_url: String,
+}
 
 /// The types of response from [`Backend`].
 ///
@@ -45,6 +59,7 @@ enum BackendResponse {
     Storage(BackendResult<StorageValue>),
     ClassHashAt(BackendResult<ClassHash>),
     ClassAt(BackendResult<StarknetRsClass>),
+    StorageProof(BackendResult<GetStorageProofResponse>),
 }
 
 /// Errors that can occur when interacting with the backend.
@@ -56,6 +71,8 @@ pub enum BackendError {
     StarknetProvider(#[from] Arc<starknet::providers::ProviderError>),
     #[error("unexpected received result: {0}")]
     UnexpectedReceiveResult(Arc<anyhow::Error>),
+    #[error("jsonrpsee error: {0}")]
+    JsonrpseeError(#[from] Arc<jsonrpsee::core::ClientError>),
 }
 
 struct Request<P> {
@@ -72,6 +89,7 @@ enum BackendRequest {
     Class(Request<ClassHash>),
     ClassHash(Request<ContractAddress>),
     Storage(Request<(ContractAddress, StorageKey)>),
+    StorageProof(Request<StorageProofPayload>),
     // Test-only request kind for requesting the backend stats
     #[cfg(test)]
     Stats(OneshotSender<usize>),
@@ -105,6 +123,13 @@ impl BackendRequest {
         (BackendRequest::Storage(Request { payload: (address, key), sender }), receiver)
     }
 
+    fn storage_proof(
+        payload: StorageProofPayload,
+    ) -> (BackendRequest, OneshotReceiver<BackendResponse>) {
+        let (sender, rx) = oneshot();
+        (BackendRequest::StorageProof(Request { payload, sender }), rx)
+    }
+
     #[cfg(test)]
     fn stats() -> (BackendRequest, OneshotReceiver<usize>) {
         let (sender, receiver) = oneshot();
@@ -122,6 +147,7 @@ enum BackendRequestIdentifier {
     Class(ClassHash),
     ClassHash(ContractAddress),
     Storage((ContractAddress, StorageKey)),
+    StorageProof(BlockNumber),
 }
 
 /// The backend for the forked provider.
@@ -266,6 +292,34 @@ where
                             .map_err(|e| BackendError::StarknetProvider(Arc::new(e)));
 
                         BackendResponse::ClassAt(res)
+                    }),
+                );
+            }
+
+            BackendRequest::StorageProof(Request { payload, sender }) => {
+                let req_key = BackendRequestIdentifier::StorageProof(payload.block_number);
+
+                self.dedup_request(
+                    req_key,
+                    sender,
+                    Box::pin(async move {
+                        let client = HttpClientBuilder::default()
+                            .build(&payload.fork_url)
+                            .expect("failed to create HTTP client");
+
+                        let res = client
+                            .request(
+                                "starknet_getStorageProof",
+                                rpc_params![
+                                    BlockIdOrTag::Tag(BlockTag::Latest),
+                                    payload.class_hashes,
+                                    payload.contract_addresses,
+                                    payload.contracts_storage_keys
+                                ],
+                            )
+                            .await
+                            .map_err(|e| BackendError::JsonrpseeError(Arc::new(e)));
+                        BackendResponse::StorageProof(res)
                     }),
                 );
             }
@@ -503,6 +557,18 @@ impl BackendClient {
         self.request(req)?;
         Ok(rx.recv()?)
     }
+
+    pub fn get_storage_proof(
+        &self,
+        payload: StorageProofPayload,
+    ) -> Result<Option<GetStorageProofResponse>, BackendClientError> {
+        let (req, rx) = BackendRequest::storage_proof(payload);
+        self.request(req)?;
+        match rx.recv()? {
+            BackendResponse::StorageProof(res) => handle_not_found_err(res),
+            response => Err(BackendClientError::UnexpectedResponse(anyhow!("{response:?}"))),
+        }
+    }
 }
 
 /// A helper function to convert a contract/class not found error returned by the RPC provider into
@@ -517,8 +583,8 @@ fn handle_not_found_err<T>(
         Ok(value) => Ok(Some(value)),
 
         Err(BackendError::StarknetProvider(err)) => match err.as_ref() {
-            StarknetProviderError::StarknetError(StarknetError::ContractNotFound) => Ok(None),
-            StarknetProviderError::StarknetError(StarknetError::ClassHashNotFound) => Ok(None),
+            ProviderError::StarknetError(StarknetError::ContractNotFound) => Ok(None),
+            ProviderError::StarknetError(StarknetError::ClassHashNotFound) => Ok(None),
             _ => Err(BackendClientError::BackendError(BackendError::StarknetProvider(err))),
         },
 

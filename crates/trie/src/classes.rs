@@ -1,12 +1,10 @@
+use crate::id::CommitId;
 use bonsai_trie::{BonsaiDatabase, BonsaiPersistentDatabase, MultiProof};
 use katana_primitives::block::BlockNumber;
 use katana_primitives::class::{ClassHash, CompiledClassHash};
 use katana_primitives::hash::{Poseidon, StarkHash};
 use katana_primitives::Felt;
 use starknet::macros::short_string;
-
-use crate::id::CommitId;
-
 #[derive(Debug)]
 pub struct ClassesMultiProof(pub MultiProof);
 
@@ -24,10 +22,14 @@ impl From<MultiProof> for ClassesMultiProof {
     }
 }
 
-#[derive(Debug)]
-pub struct ClassesTrie<DB: BonsaiDatabase> {
-    trie: crate::BonsaiTrie<DB, Poseidon>,
+pub struct ClassesTrie<
+    DB: BonsaiDatabase,
+    TreeType = bonsai_trie::trie::trees::FullMerkleTrees<Poseidon, DB, CommitId>,
+> {
+    trie: crate::BonsaiTrie<DB, Poseidon, TreeType>,
 }
+type PartialClassesTrie<DB> =
+    ClassesTrie<DB, bonsai_trie::trie::trees::PartialMerkleTrees<Poseidon, DB, CommitId>>;
 
 //////////////////////////////////////////////////////////////
 // 	ClassesTrie implementations
@@ -49,6 +51,18 @@ impl<DB: BonsaiDatabase> ClassesTrie<DB> {
     }
 }
 
+impl<DB: BonsaiDatabase> PartialClassesTrie<DB> {
+    const BONSAI_IDENTIFIER: &'static [u8] = b"classes";
+
+    pub fn new_partial(db: DB) -> Self {
+        Self { trie: crate::PartialBonsaiTrie::new_partial(db) }
+    }
+
+    pub fn root(&self) -> Felt {
+        self.trie.root(Self::BONSAI_IDENTIFIER)
+    }
+}
+
 impl<DB> ClassesTrie<DB>
 where
     DB: BonsaiDatabase + BonsaiPersistentDatabase<CommitId>,
@@ -56,6 +70,26 @@ where
     pub fn insert(&mut self, hash: ClassHash, compiled_hash: CompiledClassHash) {
         let value = compute_classes_trie_value(compiled_hash);
         self.trie.insert(Self::BONSAI_IDENTIFIER, hash, value)
+    }
+
+    pub fn commit(&mut self, block: BlockNumber) {
+        self.trie.commit(block.into())
+    }
+}
+
+impl<DB> PartialClassesTrie<DB>
+where
+    DB: BonsaiDatabase + BonsaiPersistentDatabase<CommitId>,
+{
+    pub fn insert(
+        &mut self,
+        hash: ClassHash,
+        compiled_hash: CompiledClassHash,
+        proof: MultiProof,
+        original_root: Felt,
+    ) {
+        let value = compute_classes_trie_value(compiled_hash);
+        self.trie.insert(Self::BONSAI_IDENTIFIER, hash, value, proof, original_root)
     }
 
     pub fn commit(&mut self, block: BlockNumber) {

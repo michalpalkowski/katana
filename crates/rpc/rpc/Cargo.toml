@@ -51,8 +51,13 @@ katana-node.workspace = true
 katana-rpc-api = { workspace = true, features = [ "client" ] }
 katana-trie.workspace = true
 katana-utils.workspace = true
+katana-db.workspace = true
+katana-runner.workspace = true
 
-alloy = { git = "https://github.com/alloy-rs/alloy", features = [ "contract", "network", "node-bindings", "provider-http", "providers", "signer-local" ] }
+alloy-contract.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
+# alloy = { git = "https://github.com/alloy-rs/alloy", features = [ "contract", "network", "node-bindings", "provider-http", "providers", "signer-local" ] }
 alloy-primitives = { workspace = true, features = [ "serde" ] }
 assert_matches.workspace = true
 cainome.workspace = true
@@ -68,6 +73,7 @@ serde_json.workspace = true
 similar-asserts.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+proptest = "1.7.0"
 
 [features]
 cartridge = [

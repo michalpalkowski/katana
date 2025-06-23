@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::{anyhow, bail, Context, Result};
 use katana_db::mdbx::DbEnv;
 use katana_primitives::block::{
@@ -96,7 +94,7 @@ impl Blockchain {
         fork_block: Option<BlockHashOrNumber>,
         chain: &mut katana_chain_spec::dev::ChainSpec,
     ) -> Result<(Self, BlockNumber)> {
-        let provider = JsonRpcClient::new(HttpTransport::new(fork_url));
+        let provider = JsonRpcClient::new(HttpTransport::new(fork_url.clone()));
         let chain_id = provider.chain_id().await.context("failed to fetch forked network id")?;
 
         // if the id is not in ASCII encoding, we display the chain id as is in hex.
@@ -146,7 +144,7 @@ impl Blockchain {
 
         // TODO: convert this to block number instead of BlockHashOrNumber so that it is easier to
         // check if the requested block is within the supported range or not.
-        let database = ForkedProvider::new(db, block_id, Arc::new(provider));
+        let database = ForkedProvider::new(db, block_id, provider, fork_url);
 
         // update the genesis block with the forked block's data
         // we dont update the `l1_gas_price` bcs its already done when we set the `gas_prices` in
