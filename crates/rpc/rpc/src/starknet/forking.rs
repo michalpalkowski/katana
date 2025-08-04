@@ -652,7 +652,6 @@ mod tests {
             1..6,
         )
         .prop_flat_map(|contracts| {
-            // Rozbij na odpowiednie pola
             let mut deployed_contracts = BTreeMap::new();
             let mut storage_updates = BTreeMap::new();
             let mut nonce_updates = BTreeMap::new();
