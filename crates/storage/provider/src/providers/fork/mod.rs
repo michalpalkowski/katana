@@ -78,8 +78,8 @@ impl ForkedProvider<katana_db::Db> {
         fork_url: Url,
     ) -> Self {
         let backend = Backend::new(provider.clone(), block_id).expect("failed to create backend");
-        let db_provider = Arc::new(DbProvider::new_ephemeral());
-        Self { provider: db_provider, backend, fork_url }
+        let provider = Arc::new(DbProvider::new_in_memory());
+        Self { provider, backend, fork_url }
     }
 }
 

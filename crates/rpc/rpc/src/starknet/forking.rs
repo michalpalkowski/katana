@@ -325,6 +325,7 @@ mod tests {
     use super::*;
     use crate::starknet::ClassHash;
     use katana_core::service::block_producer::IntervalBlockProducer;
+    use katana_db::Db;
     use katana_primitives::felt;
     use katana_primitives::state::StateUpdates;
     use katana_provider::providers::fork::ForkedProvider;
@@ -416,7 +417,7 @@ mod tests {
             fork_minimal_updates.replaced_classes.len()
         );
 
-        let db = katana_db::init_ephemeral_db().unwrap();
+        let db = Db::in_memory().expect("failed to create ephemeral database");
         let forked_provider = ForkedProvider::new(
             db.clone(),
             katana_primitives::block::BlockHashOrNumber::Num(block_number),
@@ -710,7 +711,7 @@ mod tests {
                 producer.force_mine();
                 block_number = provider.latest_number().unwrap();
 
-                let db = katana_db::init_ephemeral_db().unwrap();
+                let db = Db::in_memory().expect("failed to create ephemeral database");
                 let forked_provider = ForkedProvider::new(
                     db.clone(),
                     katana_primitives::block::BlockHashOrNumber::Num(block_number),

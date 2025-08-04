@@ -24,7 +24,6 @@ use katana_primitives::class::{
 };
 use katana_primitives::contract::{ContractAddress, Nonce, StorageKey, StorageValue};
 use katana_primitives::Felt;
-use katana_rpc_types::class::RpcContractClass;
 use katana_rpc_types::class::Class;
 use katana_rpc_types::trie::{ContractStorageKeys, GetStorageProofResponse};
 use parking_lot::Mutex;
