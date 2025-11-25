@@ -5,6 +5,7 @@ use katana_db::abstraction::{Database, DbTx, DbTxMut};
 use katana_db::models::contract::{ContractClassChange, ContractNonceChange};
 use katana_db::models::storage::{ContractStorageEntry, ContractStorageKey, StorageEntry};
 use katana_db::tables;
+use katana_db::trie::TrieDbFactory;
 use katana_primitives::block::{BlockHashOrNumber, BlockNumber};
 use katana_primitives::class::{ClassHash, CompiledClassHash, ContractClass};
 use katana_primitives::contract::{GenericContractInfo, Nonce, StorageKey, StorageValue};
@@ -197,7 +198,11 @@ impl<Db: Database> StateProofProvider for LatestStateProvider<Db> {
 
             Ok(proofs.classes_proof.nodes.into())
         } else {
-            Err(ProviderError::StateProofNotSupported)
+            let mut tx = self.db.db().tx()?;
+            let mut trie = TrieDbFactory::new(&tx).latest().classes_trie();
+            let proofs = trie.multiproof(classes);
+            tx.commit()?;
+            Ok(proofs)
         }
     }
 
@@ -221,7 +226,11 @@ impl<Db: Database> StateProofProvider for LatestStateProvider<Db> {
 
             Ok(proofs.classes_proof.nodes.into())
         } else {
-            Err(ProviderError::StateProofNotSupported)
+            let mut tx = self.db.db().tx()?;
+            let mut trie = TrieDbFactory::new(&tx).latest().contracts_trie();
+            let proofs = trie.multiproof(addresses);
+            tx.commit()?;
+            Ok(proofs)
         }
     }
 
@@ -249,7 +258,11 @@ impl<Db: Database> StateProofProvider for LatestStateProvider<Db> {
 
             Ok(proofs.into())
         } else {
-            Err(ProviderError::StateProofNotSupported)
+            let mut tx = self.db.db().tx()?;
+            let mut trie = TrieDbFactory::new(&tx).latest().storages_trie(address);
+            let proofs = trie.multiproof(storage_keys);
+            tx.commit()?;
+            Ok(proofs)
         }
     }
 }
@@ -272,7 +285,11 @@ impl<Db: Database> StateRootProvider for LatestStateProvider<Db> {
 
             Ok(roots.global_roots.classes_tree_root)
         } else {
-            Ok(Felt::ZERO)
+            let mut tx = self.db.db().tx()?;
+            let trie = TrieDbFactory::new(&tx).latest().classes_trie();
+            let root = trie.root();
+            tx.commit()?;
+            Ok(root)
         }
     }
 
@@ -293,7 +310,11 @@ impl<Db: Database> StateRootProvider for LatestStateProvider<Db> {
 
             Ok(roots.global_roots.contracts_tree_root)
         } else {
-            Ok(Felt::ZERO)
+            let mut tx = self.db.db().tx()?;
+            let trie = TrieDbFactory::new(&tx).latest().contracts_trie();
+            let root = trie.root();
+            tx.commit()?;
+            Ok(root)
         }
     }
 
@@ -313,7 +334,11 @@ impl<Db: Database> StateRootProvider for LatestStateProvider<Db> {
             let root = result.expect("proofs should exist for block");
             Ok(Some(root))
         } else {
-            Ok(None)
+            let mut tx = self.db.db().tx()?;
+            let trie = TrieDbFactory::new(&tx).latest().storages_trie(contract);
+            let root = trie.root();
+            tx.commit()?;
+            Ok(Some(root))
         }
     }
 }
@@ -467,30 +492,43 @@ impl<Db: Database> StateProvider for HistoricalStateProvider<Db> {
 
 impl<Db: Database> StateProofProvider for HistoricalStateProvider<Db> {
     fn class_multiproof(&self, classes: Vec<ClassHash>) -> ProviderResult<katana_trie::MultiProof> {
-        // we don't have a way to construct state proofs for locally generated state yet
         if self.provider.block() > self.fork_db.block_id {
-            return Err(ProviderError::StateProofNotSupported);
+            let mut tx = self.local_db.db().tx()?;
+            let proofs = TrieDbFactory::new(&tx)
+                .historical(self.provider.block())
+                .ok_or(ProviderError::StateProofNotSupported)?
+                .classes_trie()
+                .multiproof(classes);
+            tx.commit()?;
+            Ok(proofs)
+        } else {
+            let result = self.fork_db.backend.get_classes_proofs(classes, self.provider.block())?;
+            let proofs = result.expect("block should exist");
+
+            Ok(proofs.classes_proof.nodes.into())
         }
-
-        let result = self.fork_db.backend.get_classes_proofs(classes, self.provider.block())?;
-        let proofs = result.expect("block should exist");
-
-        Ok(proofs.classes_proof.nodes.into())
     }
 
     fn contract_multiproof(
         &self,
         addresses: Vec<ContractAddress>,
     ) -> ProviderResult<katana_trie::MultiProof> {
-        // we don't have a way to construct state proofs for locally generated state yet
         if self.provider.block() > self.fork_db.block_id {
-            return Err(ProviderError::StateProofNotSupported);
+            let mut tx = self.local_db.db().tx()?;
+            let proofs = TrieDbFactory::new(&tx)
+                .historical(self.provider.block())
+                .ok_or(ProviderError::StateProofNotSupported)?
+                .contracts_trie()
+                .multiproof(addresses);
+            tx.commit()?;
+            Ok(proofs)
+        } else {
+            let result =
+                self.fork_db.backend.get_contracts_proofs(addresses, self.provider.block())?;
+            let proofs = result.expect("block should exist");
+
+            Ok(proofs.classes_proof.nodes.into())
         }
-
-        let result = self.fork_db.backend.get_contracts_proofs(addresses, self.provider.block())?;
-        let proofs = result.expect("block should exist");
-
-        Ok(proofs.classes_proof.nodes.into())
     }
 
     fn storage_multiproof(
@@ -498,18 +536,24 @@ impl<Db: Database> StateProofProvider for HistoricalStateProvider<Db> {
         address: ContractAddress,
         storage_keys: Vec<StorageKey>,
     ) -> ProviderResult<katana_trie::MultiProof> {
-        // we don't have a way to construct state proofs for locally generated state yet
         if self.provider.block() > self.fork_db.block_id {
-            return Err(ProviderError::StateProofNotSupported);
+            let mut tx = self.local_db.db().tx()?;
+            let proofs = TrieDbFactory::new(&tx)
+                .historical(self.provider.block())
+                .ok_or(ProviderError::StateProofNotSupported)?
+                .storages_trie(address)
+                .multiproof(storage_keys);
+            tx.commit()?;
+            Ok(proofs)
+        } else {
+            let key = vec![ContractStorageKeys { address, keys: storage_keys }];
+            let result = self.fork_db.backend.get_storages_proofs(key, self.provider.block())?;
+
+            let mut proofs = result.expect("block should exist");
+            let proofs = proofs.contracts_storage_proofs.nodes.pop().unwrap();
+
+            Ok(proofs.into())
         }
-
-        let key = vec![ContractStorageKeys { address, keys: storage_keys }];
-        let result = self.fork_db.backend.get_storages_proofs(key, self.provider.block())?;
-
-        let mut proofs = result.expect("block should exist");
-        let proofs = proofs.contracts_storage_proofs.nodes.pop().unwrap();
-
-        Ok(proofs.into())
     }
 }
 
@@ -538,9 +582,15 @@ impl<Db: Database> StateRootProvider for HistoricalStateProvider<Db> {
     }
 
     fn classes_root(&self) -> ProviderResult<Felt> {
-        // note: we are not computing the state trie correctly for block post-fork
         if self.provider.block() > self.fork_db.block_id {
-            return Ok(Felt::ZERO);
+            let mut tx = self.local_db.db().tx()?;
+            let root = TrieDbFactory::new(&tx)
+                .historical(self.provider.block())
+                .ok_or(ProviderError::StateProofNotSupported)?
+                .classes_trie()
+                .root();
+            tx.commit()?;
+            return Ok(root);
         }
 
         let result = self.fork_db.backend.get_global_roots(self.provider.block())?;
@@ -549,9 +599,15 @@ impl<Db: Database> StateRootProvider for HistoricalStateProvider<Db> {
     }
 
     fn contracts_root(&self) -> ProviderResult<Felt> {
-        // note: we are not computing the state trie correctly for block post-fork
         if self.provider.block() > self.fork_db.block_id {
-            return Ok(Felt::ZERO);
+            let mut tx = self.local_db.db().tx()?;
+            let root = TrieDbFactory::new(&tx)
+                .historical(self.provider.block())
+                .ok_or(ProviderError::StateProofNotSupported)?
+                .contracts_trie()
+                .root();
+            tx.commit()?;
+            return Ok(root);
         }
 
         let result = self.fork_db.backend.get_global_roots(self.provider.block())?;
@@ -560,9 +616,15 @@ impl<Db: Database> StateRootProvider for HistoricalStateProvider<Db> {
     }
 
     fn storage_root(&self, contract: ContractAddress) -> ProviderResult<Option<Felt>> {
-        // note: we are not computing the state trie correctly for block post-fork
         if self.provider.block() > self.fork_db.block_id {
-            return Ok(None);
+            let mut tx = self.local_db.db().tx()?;
+            let root = TrieDbFactory::new(&tx)
+                .historical(self.provider.block())
+                .ok_or(ProviderError::StateProofNotSupported)?
+                .storages_trie(contract)
+                .root();
+            tx.commit()?;
+            return Ok(Some(root));
         }
 
         let result = self.fork_db.backend.get_storage_root(contract, self.provider.block())?;
