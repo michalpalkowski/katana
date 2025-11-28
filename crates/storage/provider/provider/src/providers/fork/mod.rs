@@ -353,9 +353,9 @@ impl<Tx1: DbTx> BlockStatusProvider for ForkedProvider<Tx1> {
 
 impl<Tx1: DbTx> StateUpdateProvider for ForkedProvider<Tx1> {
     fn state_update(&self, block_id: BlockHashOrNumber) -> ProviderResult<Option<StateUpdates>> {
-        if let Some(value) = self.local_db.state_update(block_id)? {
-            return Ok(Some(value));
-        }
+        // if let Some(value) = self.local_db.state_update(block_id)? {
+        //     return Ok(Some(value));
+        // }
 
         if let Some(value) = self.fork_db.db.provider().state_update(block_id)? {
             return Ok(Some(value));
