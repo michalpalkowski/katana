@@ -6430,6 +6430,7 @@ dependencies = [
  "auto_impl",
  "katana-db",
  "katana-primitives",
+ "katana-rpc-types",
  "katana-trie",
  "starknet",
  "starknet-types-core",
