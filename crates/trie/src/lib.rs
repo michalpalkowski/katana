@@ -6,8 +6,8 @@ pub use bonsai_trie::{
     trie::trees::{FullMerkleTrees, PartialMerkleTrees},
     BonsaiDatabase, BonsaiPersistentDatabase, BonsaiStorageConfig,
 };
-use katana_primitives::class::ClassHash;
 use katana_primitives::Felt;
+use katana_primitives::{block::BlockNumber, class::ClassHash};
 use starknet_types_core::hash::{Pedersen, StarkHash};
 pub use {bitvec, bonsai_trie as bonsai};
 

@@ -41,19 +41,11 @@ impl<Tx1: DbTxMut> TrieWriter for ForkedProvider<Tx1> {
         &self,
         block_number: BlockNumber,
         updates: &BTreeMap<ClassHash, CompiledClassHash>,
-    ) -> ProviderResult<Felt> {
-        self.local_db.trie_insert_declared_classes(block_number, updates)
-    }
-
-    fn trie_insert_declared_classes_with_proof(
-        &self,
-        block_number: BlockNumber,
-        updates: &BTreeMap<ClassHash, CompiledClassHash>,
         proof: MultiProof,
         original_root: Felt,
     ) -> ProviderResult<Felt> {
         let mut trie = PartialClassesTrie::new_partial(TrieDbMut::<tables::ClassesTrie, _>::new(
-            &*self.local_db,
+            self.local_db.tx().clone(),
         ));
 
         for (class_hash, compiled_hash) in updates {
@@ -75,7 +67,7 @@ impl<Tx1: DbTxMut> TrieWriter for ForkedProvider<Tx1> {
     ) -> ProviderResult<Felt> {
         let mut contract_trie_db =
             PartialContractsTrie::new_partial(TrieDbMut::<tables::ContractsTrie, _>::new(
-                &*self.local_db,
+                self.local_db.tx().clone(),
             ));
 
         let mut contract_leafs: HashMap<ContractAddress, ContractLeaf> = HashMap::new();
@@ -95,7 +87,7 @@ impl<Tx1: DbTxMut> TrieWriter for ForkedProvider<Tx1> {
                 state_updates.storage_updates.iter().zip(contracts_storage_proofs.iter())
             {
                 let mut storage_trie_db = PartialStoragesTrie::new_partial(
-                    TrieDbMut::<tables::StoragesTrie, _>::new(&*self.local_db),
+                    TrieDbMut::<tables::StoragesTrie, _>::new(self.local_db.tx().clone()),
                     *address,
                 );
 
@@ -137,7 +129,7 @@ impl<Tx1: DbTxMut> TrieWriter for ForkedProvider<Tx1> {
                     // Use storage root from contract_leaves_data if available, otherwise get from trie
                     if leaf.storage_root.is_none() {
                         let storage_trie = PartialStoragesTrie::new_partial(
-                            TrieDbMut::<tables::StoragesTrie, _>::new(&*self.local_db),
+                            TrieDbMut::<tables::StoragesTrie, _>::new(self.local_db.tx().clone()),
                             address,
                         );
                         let storage_root = storage_trie.root();
@@ -203,6 +195,7 @@ impl<Tx1: DbTxMut> TrieWriter for ForkedProvider<Tx1> {
         // Collect class hashes
         class_hashes.extend(state_updates.declared_classes.keys().copied());
         class_hashes.extend(state_updates.deprecated_declared_classes.iter().copied());
+        class_hashes.extend(state_updates.migrated_compiled_classes.keys().copied());
 
         // Collect all unique contract addresses that need proofs
         for address in state_updates.deployed_contracts.keys() {
@@ -223,7 +216,7 @@ impl<Tx1: DbTxMut> TrieWriter for ForkedProvider<Tx1> {
         let mut contract_addresses: Vec<_> = contract_addresses.into_iter().collect();
         contract_addresses.sort();
 
-        // Fetch proofs from remote RPC (only if we have changes)
+        // Fetch proofs from remote RPC
         let fork_point = self.fork_db.block_id;
 
         // Fetch classes proof

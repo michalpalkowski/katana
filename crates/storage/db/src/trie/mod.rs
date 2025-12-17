@@ -66,7 +66,7 @@ impl<Tx: DbTx> GlobalTrie<Tx> {
 
     pub fn partial_contracts_trie(
         &self,
-    ) -> katana_trie::PartialContractsTrie<TrieDb<'a, tables::ContractsTrie, Tx>> {
+    ) -> katana_trie::PartialContractsTrie<TrieDb<tables::ContractsTrie, Tx>> {
         katana_trie::PartialContractsTrie::new_partial(TrieDb::new(self.tx.clone()))
     }
 
@@ -77,7 +77,7 @@ impl<Tx: DbTx> GlobalTrie<Tx> {
 
     pub fn partial_classes_trie(
         &self,
-    ) -> katana_trie::PartialClassesTrie<TrieDb<'a, tables::ClassesTrie, Tx>> {
+    ) -> katana_trie::PartialClassesTrie<TrieDb<tables::ClassesTrie, Tx>> {
         katana_trie::PartialClassesTrie::new_partial(TrieDb::new(self.tx.clone()))
     }
 
@@ -93,7 +93,7 @@ impl<Tx: DbTx> GlobalTrie<Tx> {
     pub fn partial_storages_trie(
         &self,
         address: ContractAddress,
-    ) -> katana_trie::PartialStoragesTrie<TrieDb<'a, tables::StoragesTrie, Tx>> {
+    ) -> katana_trie::PartialStoragesTrie<TrieDb<tables::StoragesTrie, Tx>> {
         katana_trie::PartialStoragesTrie::new_partial(TrieDb::new(self.tx.clone()), address)
     }
 }
@@ -118,7 +118,7 @@ impl<Tx: DbTx> HistoricalGlobalTrie<Tx> {
 
     pub fn partial_contracts_trie(
         &self,
-    ) -> katana_trie::PartialContractsTrie<SnapshotTrieDb<'a, tables::ContractsTrie, Tx>> {
+    ) -> katana_trie::PartialContractsTrie<SnapshotTrieDb<tables::ContractsTrie, Tx>> {
         let commit = CommitId::new(self.block);
         katana_trie::PartialContractsTrie::new_partial(SnapshotTrieDb::new(self.tx.clone(), commit))
     }
@@ -133,7 +133,7 @@ impl<Tx: DbTx> HistoricalGlobalTrie<Tx> {
 
     pub fn partial_classes_trie(
         &self,
-    ) -> katana_trie::PartialClassesTrie<SnapshotTrieDb<'a, tables::ClassesTrie, Tx>> {
+    ) -> katana_trie::PartialClassesTrie<SnapshotTrieDb<tables::ClassesTrie, Tx>> {
         let commit = CommitId::new(self.block);
         katana_trie::PartialClassesTrie::new_partial(SnapshotTrieDb::new(self.tx.clone(), commit))
     }
@@ -151,7 +151,7 @@ impl<Tx: DbTx> HistoricalGlobalTrie<Tx> {
     pub fn partial_storages_trie(
         &self,
         address: ContractAddress,
-    ) -> katana_trie::PartialStoragesTrie<SnapshotTrieDb<'a, tables::StoragesTrie, Tx>> {
+    ) -> katana_trie::PartialStoragesTrie<SnapshotTrieDb<tables::StoragesTrie, Tx>> {
         let commit = CommitId::new(self.block);
         katana_trie::PartialStoragesTrie::new_partial(
             SnapshotTrieDb::new(self.tx.clone(), commit),

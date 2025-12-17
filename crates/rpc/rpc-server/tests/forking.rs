@@ -890,6 +890,7 @@ mod tests {
                 declared_classes: BTreeMap::from([]),
                 deprecated_declared_classes: BTreeSet::new(),
                 replaced_classes: BTreeMap::new(),
+                migrated_compiled_classes: BTreeMap::new(),
             };
 
             let fork_minimal_updates_vec = vec![
@@ -907,6 +908,7 @@ mod tests {
                     declared_classes: BTreeMap::from([]),
                     deprecated_declared_classes: BTreeSet::new(),
                     replaced_classes: BTreeMap::new(),
+                    migrated_compiled_classes: BTreeMap::new(),
                 },
                 StateUpdates {
                     nonce_updates: BTreeMap::from([(
@@ -922,6 +924,7 @@ mod tests {
                     declared_classes: BTreeMap::from([]),
                     deprecated_declared_classes: BTreeSet::new(),
                     replaced_classes: BTreeMap::new(),
+                    migrated_compiled_classes: BTreeMap::new(),
                 },
             ];
             let num_iters = 2;
