@@ -2,10 +2,12 @@ use bitvec::view::AsBits;
 pub use bonsai::{BitVec, MultiProof, Path, ProofNode};
 pub use bonsai_trie::databases::HashMapDb;
 use bonsai_trie::BonsaiStorage;
-pub use bonsai_trie::{BonsaiDatabase, BonsaiPersistentDatabase, BonsaiStorageConfig};
-use katana_primitives::block::BlockNumber;
-use katana_primitives::class::ClassHash;
+pub use bonsai_trie::{
+    trie::trees::{FullMerkleTrees, PartialMerkleTrees},
+    BonsaiDatabase, BonsaiPersistentDatabase, BonsaiStorageConfig,
+};
 use katana_primitives::Felt;
+use katana_primitives::{block::BlockNumber, class::ClassHash};
 use starknet_types_core::hash::{Pedersen, StarkHash};
 pub use {bitvec, bonsai_trie as bonsai};
 
@@ -17,7 +19,7 @@ mod storages;
 pub use classes::*;
 pub use contracts::*;
 pub use id::CommitId;
-pub use storages::StoragesTrie;
+pub use storages::{PartialStoragesTrie, StoragesTrie};
 
 /// A lightweight shim for [`BonsaiStorage`].
 ///
@@ -25,27 +27,26 @@ pub use storages::StoragesTrie;
 /// having to handle how to transform the keys into the internal keys used by the trie.
 /// This struct is not meant to be used directly, and instead use the specific tries that have
 /// been derived from it, [`ClassesTrie`], [`ContractsTrie`], or [`StoragesTrie`].
-pub struct BonsaiTrie<DB, Hash = Pedersen>
+pub struct BonsaiTrie<DB, Hash = Pedersen, T = FullMerkleTrees<Hash, DB, CommitId>>
 where
     DB: BonsaiDatabase,
     Hash: StarkHash + Send + Sync,
 {
-    storage: BonsaiStorage<CommitId, DB, Hash>,
+    storage: BonsaiStorage<CommitId, DB, Hash, T>,
 }
 
-impl<DB, Hash> BonsaiTrie<DB, Hash>
+pub type PartialBonsaiTrie<DB, Hash = Pedersen> =
+    BonsaiTrie<DB, Hash, PartialMerkleTrees<Hash, DB, CommitId>>;
+
+impl<DB, Hash, T> BonsaiTrie<DB, Hash, T>
 where
     DB: BonsaiDatabase,
     Hash: StarkHash + Send + Sync,
 {
-    pub fn new(db: DB) -> Self {
-        let config = BonsaiStorageConfig {
-            // This field controls what's the oldest block we can revert to.
-            //
-            // The value 5 is chosen arbitrarily as a placeholder. This value should be
-            // configurable.
-            max_saved_trie_logs: Some(5),
-
+    fn bonsai_config() -> BonsaiStorageConfig {
+        BonsaiStorageConfig {
+            // we have our own implementation of storing trie changes
+            max_saved_trie_logs: Some(0),
             // in the bonsai-trie crate, this field seems to be only used in rocksdb impl.
             // i dont understand why would they add a config thats implementation specific ????
             //
@@ -58,13 +59,37 @@ where
 
             // creates a snapshot for every block
             snapshot_interval: 1,
-        };
-
-        Self { storage: BonsaiStorage::new(db, config, 251) }
+        }
     }
+}
 
+impl<DB, Hash> BonsaiTrie<DB, Hash, FullMerkleTrees<Hash, DB, CommitId>>
+where
+    DB: BonsaiDatabase,
+    Hash: StarkHash + Send + Sync,
+{
     pub fn root(&self, id: &[u8]) -> Felt {
         self.storage.root_hash(id).expect("failed to get trie root")
+    }
+}
+
+impl<DB, Hash> BonsaiTrie<DB, Hash, PartialMerkleTrees<Hash, DB, CommitId>>
+where
+    DB: BonsaiDatabase,
+    Hash: StarkHash + Send + Sync,
+{
+    pub fn root(&self, id: &[u8]) -> Felt {
+        self.storage.root_hash(id).expect("failed to get trie root")
+    }
+}
+
+impl<DB, Hash> BonsaiTrie<DB, Hash, FullMerkleTrees<Hash, DB, CommitId>>
+where
+    DB: BonsaiDatabase,
+    Hash: StarkHash + Send + Sync,
+{
+    pub fn new(db: DB) -> Self {
+        Self { storage: BonsaiStorage::new(db, Self::bonsai_config(), 251) }
     }
 
     pub fn multiproof(&mut self, id: &[u8], keys: Vec<Felt>) -> MultiProof {
@@ -77,7 +102,35 @@ where
     }
 }
 
-impl<DB, Hash> BonsaiTrie<DB, Hash>
+impl<DB, Hash> BonsaiTrie<DB, Hash, PartialMerkleTrees<Hash, DB, CommitId>>
+where
+    DB: BonsaiDatabase,
+    Hash: StarkHash + Send + Sync,
+{
+    pub fn new_partial(db: DB) -> Self {
+        Self { storage: BonsaiStorage::new_partial(db, Self::bonsai_config(), 251) }
+    }
+
+    pub fn multiproof(&mut self, id: &[u8], keys: Vec<Felt>) -> MultiProof {
+        let keys = keys.into_iter().map(|key| key.to_bytes_be().as_bits()[5..].to_owned());
+        self.storage.get_multi_proof(id, keys, None, None).expect("failed to get multiproof")
+    }
+
+    pub fn partial_multiproof(
+        &mut self,
+        id: &[u8],
+        keys: Vec<Felt>,
+        rpc_proof: Option<MultiProof>,
+        rpc_root: Option<Felt>,
+    ) -> MultiProof {
+        let keys = keys.into_iter().map(|key| key.to_bytes_be().as_bits()[5..].to_owned());
+        self.storage
+            .get_multi_proof(id, keys, rpc_proof, rpc_root)
+            .expect("failed to get multiproof")
+    }
+}
+
+impl<DB, Hash> BonsaiTrie<DB, Hash, FullMerkleTrees<Hash, DB, CommitId>>
 where
     DB: BonsaiDatabase + BonsaiPersistentDatabase<CommitId>,
     Hash: StarkHash + Send + Sync,
@@ -92,13 +145,45 @@ where
     }
 }
 
-impl<DB, Hash> std::fmt::Debug for BonsaiTrie<DB, Hash>
+impl<DB, Hash> BonsaiTrie<DB, Hash, PartialMerkleTrees<Hash, DB, CommitId>>
+where
+    DB: BonsaiDatabase + BonsaiPersistentDatabase<CommitId>,
+    Hash: StarkHash + Send + Sync,
+{
+    pub fn insert_with_proof(
+        &mut self,
+        id: &[u8],
+        key: Felt,
+        value: Felt,
+        proof: MultiProof,
+        original_root: Felt,
+    ) {
+        let key: BitVec = key.to_bytes_be().as_bits()[5..].to_owned();
+        self.storage.insert_with_proof(id, &key, &value, proof, original_root).unwrap();
+    }
+
+    pub fn commit(&mut self, id: CommitId) {
+        self.storage.commit(id).expect("failed to commit trie");
+    }
+}
+
+impl<DB, Hash> std::fmt::Debug for BonsaiTrie<DB, Hash, FullMerkleTrees<Hash, DB, CommitId>>
 where
     DB: BonsaiDatabase,
     Hash: StarkHash + Send + Sync,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BonsaiTrie").field("storage", &self.storage).finish()
+        f.debug_struct("BonsaiTrie").field("storage", &"<BonsaiStorage>").finish()
+    }
+}
+
+impl<DB, Hash> std::fmt::Debug for BonsaiTrie<DB, Hash, PartialMerkleTrees<Hash, DB, CommitId>>
+where
+    DB: BonsaiDatabase,
+    Hash: StarkHash + Send + Sync,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BonsaiTrie").field("storage", &"<BonsaiStorage>").finish()
     }
 }
 
