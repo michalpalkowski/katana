@@ -375,7 +375,10 @@ handle_control_command() {
 
             log "Starting katana asynchronously..."
             # shellcheck disable=SC2086
-            /bin/katana --db-dir="$KATANA_DB_DIR" $KATANA_ARGS &
+            # Close fd 3 (control port) for child so it doesn't inherit it.
+            # Without this, the virtio-serial port stays "busy" after Katana exits
+            # and the outer loop can't reopen it.
+            /bin/katana --db-dir="$KATANA_DB_DIR" $KATANA_ARGS 3>&- &
             KATANA_PID=$!
             KATANA_EXIT_CODE="running"
             respond_control "ok started pid=$KATANA_PID"
@@ -550,6 +553,17 @@ log_info "Creating /etc files"
 echo "root:x:0:0:root:/:/bin/sh" > etc/passwd
 echo "root:x:0:" > etc/group
 log_ok "/etc files created"
+
+# Install CA certificates so HTTPS connections work (e.g. forking from Sepolia RPC).
+# Without these, rustls/reqwest fail with "No CA certificates were loaded from the system".
+CA_CERT_SOURCE="/etc/ssl/certs/ca-certificates.crt"
+if [ -f "$CA_CERT_SOURCE" ]; then
+    mkdir -p etc/ssl/certs
+    cp "$CA_CERT_SOURCE" etc/ssl/certs/ca-certificates.crt
+    log_ok "CA certificates installed"
+else
+    log_warn "CA certificates not found at $CA_CERT_SOURCE (HTTPS will fail in VM)"
+fi
 
 # ==============================================================================
 # SECTION 4: Create CPIO Archive
