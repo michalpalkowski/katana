@@ -1,11 +1,17 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use jsonrpsee::core::{async_trait, RpcResult};
 use katana_pool::TransactionPool;
+use katana_primitives::block::{BlockHashOrNumber, BlockNumber};
+use katana_primitives::contract::{StorageKey, StorageValue};
 use katana_primitives::transaction::TxHash;
+use katana_primitives::ContractAddress;
+use katana_provider::api::state_update::StateUpdateProvider;
 use katana_provider::{ProviderFactory, ProviderRO};
+use katana_rpc_api::error::katana::KatanaApiError;
 use katana_rpc_api::error::starknet::StarknetApiError;
-use katana_rpc_api::katana::KatanaApiServer;
+use katana_rpc_api::katana::{KatanaApiServer, StorageDiffEntry};
 use katana_rpc_api::starknet::StarknetWriteApiServer;
 use katana_rpc_types::broadcasted::{
     AddDeclareTransactionResponse, AddDeployAccountTransactionResponse,
@@ -108,6 +114,44 @@ where
             }
         }
     }
+
+    pub(super) async fn storage_diff(
+        &self,
+        contract_address: ContractAddress,
+        from_block: BlockNumber,
+        to_block: BlockNumber,
+    ) -> Result<Vec<StorageDiffEntry>, KatanaApiError> {
+        if from_block >= to_block {
+            return Err(KatanaApiError::InvalidBlockRange);
+        }
+
+        self.on_io_blocking_task(move |this| {
+            let provider = this.storage().provider();
+            let mut accumulated: BTreeMap<StorageKey, StorageValue> = BTreeMap::new();
+
+            for block_num in (from_block + 1)..=to_block {
+                let block_id = BlockHashOrNumber::Num(block_num);
+                let state_updates = StateUpdateProvider::state_update(&provider, block_id)
+                    .map_err(|e| KatanaApiError::InternalError(e.to_string()))?
+                    .ok_or(KatanaApiError::BlockNotFound)?;
+
+                if let Some(contract_updates) =
+                    state_updates.storage_updates.get(&contract_address)
+                {
+                    for (key, value) in contract_updates {
+                        accumulated.insert(*key, *value);
+                    }
+                }
+            }
+
+            Ok(accumulated
+                .into_iter()
+                .map(|(key, value)| StorageDiffEntry { key, value })
+                .collect())
+        })
+        .await
+        .map_err(|e| KatanaApiError::InternalError(e.to_string()))?
+    }
 }
 
 #[async_trait]
@@ -171,5 +215,14 @@ where
     ) -> RpcResult<TxReceiptWithBlockInfo> {
         let response = self.add_deploy_account_tx(deploy_account_transaction).await?;
         Ok(self.wait_for_tx_receipt(response.transaction_hash).await?)
+    }
+
+    async fn get_storage_diff(
+        &self,
+        contract_address: ContractAddress,
+        from_block: BlockNumber,
+        to_block: BlockNumber,
+    ) -> RpcResult<Vec<StorageDiffEntry>> {
+        Ok(self.storage_diff(contract_address, from_block, to_block).await?)
     }
 }

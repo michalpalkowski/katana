@@ -1,18 +1,32 @@
 use jsonrpsee::types::ErrorObjectOwned;
 
-#[derive(thiserror::Error, Clone, Copy, Debug)]
+#[derive(thiserror::Error, Clone, Debug)]
 #[allow(clippy::enum_variant_names)]
 pub enum KatanaApiError {
     #[error("Failed to change next block timestamp.")]
-    FailedToChangeNextBlockTimestamp = 1,
+    FailedToChangeNextBlockTimestamp,
     #[error("Failed to dump state.")]
-    FailedToDumpState = 2,
+    FailedToDumpState,
     #[error("Failed to update storage.")]
-    FailedToUpdateStorage = 3,
+    FailedToUpdateStorage,
+    #[error("Invalid block range: from_block must be less than to_block.")]
+    InvalidBlockRange,
+    #[error("Block not found.")]
+    BlockNotFound,
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 impl From<KatanaApiError> for ErrorObjectOwned {
     fn from(err: KatanaApiError) -> Self {
-        ErrorObjectOwned::owned(err as i32, err.to_string(), None::<()>)
+        let code = match &err {
+            KatanaApiError::FailedToChangeNextBlockTimestamp => 1,
+            KatanaApiError::FailedToDumpState => 2,
+            KatanaApiError::FailedToUpdateStorage => 3,
+            KatanaApiError::InvalidBlockRange => 4,
+            KatanaApiError::BlockNotFound => 5,
+            KatanaApiError::InternalError(_) => 6,
+        };
+        ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
     }
 }
