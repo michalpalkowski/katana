@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use alloy_primitives::U256;
+use alloy_primitives::{U256, hex};
 #[cfg(feature = "server")]
 use anyhow::bail;
 use anyhow::{Context, Result};
