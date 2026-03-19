@@ -8,4 +8,7 @@ pub struct TeeConfig {
     /// The block number Katana forked from (resolved at startup).
     /// Included in TEE report_data for fork freshness verification.
     pub fork_block_number: Option<u64>,
+    /// SHA-256 hash of security-critical runtime arguments.
+    /// Embedded in report_data[32..64] for attestation binding.
+    pub args_hash: Option<[u8; 32]>,
 }

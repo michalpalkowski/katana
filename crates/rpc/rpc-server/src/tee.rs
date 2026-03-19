@@ -27,6 +27,9 @@ where
     /// The block number Katana forked from (if running in fork mode).
     /// Included in report_data so SP1 can prove fork freshness.
     fork_block_number: Option<u64>,
+    /// SHA-256 hash of security-critical runtime arguments.
+    /// Embedded in report_data[32..64] for on-chain verification.
+    args_hash: Option<[u8; 32]>,
 }
 
 impl<PF> TeeApi<PF>
@@ -38,14 +41,16 @@ where
         provider_factory: PF,
         tee_provider: Arc<dyn TeeProvider>,
         fork_block_number: Option<u64>,
+        args_hash: Option<[u8; 32]>,
     ) -> Self {
         info!(
             target: "rpc::tee",
             provider_type = tee_provider.provider_type(),
             ?fork_block_number,
+            args_hash = args_hash.map(hex::encode),
             "TEE API initialized"
         );
-        Self { provider_factory, tee_provider, fork_block_number }
+        Self { provider_factory, tee_provider, fork_block_number, args_hash }
     }
 
     /// Compute the 64-byte report data for attestation.
@@ -63,9 +68,12 @@ where
         let commitment_bytes = commitment.to_bytes_be();
 
         let mut report_data = [0u8; 64];
-        // Place the 32-byte hash in the first half
+        // First 32 bytes: Poseidon commitment to blockchain state
         report_data[..32].copy_from_slice(&commitment_bytes);
-        // Second half remains zeros
+        // Second 32 bytes: SHA-256 hash of security-critical runtime arguments
+        if let Some(ref args_hash) = self.args_hash {
+            report_data[32..64].copy_from_slice(args_hash);
+        }
 
         debug!(
             target: "rpc::tee",
@@ -74,6 +82,7 @@ where
             fork_block_number = ?self.fork_block_number,
             %events_commitment,
             %commitment,
+            args_hash = ?self.args_hash.map(hex::encode),
             "Computed report data for attestation"
         );
 

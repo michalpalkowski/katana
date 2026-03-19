@@ -685,9 +685,13 @@ impl SequencerNodeArgs {
 
     #[cfg(feature = "tee")]
     fn tee_config(&self) -> Option<TeeConfig> {
-        self.tee
-            .tee_provider
-            .map(|provider_type| TeeConfig { provider_type, fork_block_number: None })
+        self.tee.tee_provider.map(|provider_type| {
+            let args_hash = self.tee.args_hash.as_ref().and_then(|hex_str| {
+                let bytes = hex::decode(hex_str).ok()?;
+                <[u8; 32]>::try_from(bytes.as_slice()).ok()
+            });
+            TeeConfig { provider_type, fork_block_number: None, args_hash }
+        })
     }
 
     /// Parse the node config from the command line arguments and the config file,

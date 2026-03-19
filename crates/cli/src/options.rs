@@ -1031,6 +1031,12 @@ pub struct TeeOptions {
     #[arg(long = "tee.provider", value_name = "PROVIDER")]
     #[serde(default)]
     pub tee_provider: Option<katana_tee::TeeProviderType>,
+
+    /// SHA-256 hash of security-critical runtime arguments for attestation binding.
+    /// Computed by the hypervisor init script and passed automatically.
+    #[arg(long = "tee.args-hash", value_name = "HEX")]
+    #[serde(default)]
+    pub args_hash: Option<String>,
 }
 
 #[cfg(feature = "tee")]
@@ -1039,6 +1045,9 @@ impl TeeOptions {
         if let Some(other) = other {
             if self.tee_provider.is_none() {
                 self.tee_provider = other.tee_provider;
+            }
+            if self.args_hash.is_none() {
+                self.args_hash = other.args_hash.clone();
             }
         }
     }
