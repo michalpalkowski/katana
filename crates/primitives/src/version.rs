@@ -9,7 +9,7 @@
 /// >=0.13.4. Check out the [release notes] for more info.
 ///
 /// [release notes]: https://community.starknet.io/t/cairo-v2-10-0-is-out/115362
-pub const CURRENT_STARKNET_VERSION: StarknetVersion = StarknetVersion::new([0, 13, 4, 0]);
+pub const CURRENT_STARKNET_VERSION: StarknetVersion = StarknetVersion::new([0, 14, 0, 0]);
 
 /// Starknet protocol version.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -28,8 +28,14 @@ impl StarknetVersion {
     /// so this is unambiguous.
     pub const UNVERSIONED: Self = Self::new([0, 0, 0, 0]);
 
+    /// Starknet version 0.7.0.
     pub const V0_7_0: Self = Self::new([0, 7, 0, 0]);
+    /// Starknet version 0.11.1.
+    pub const V0_11_1: Self = Self::new([0, 11, 1, 0]);
+    /// Starknet version 0.13.2.
     pub const V0_13_2: Self = Self::new([0, 13, 2, 0]);
+    /// Starknet version 0.13.4.
+    pub const V0_13_4: Self = Self::new([0, 13, 4, 0]);
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -169,6 +175,7 @@ impl TryFrom<StarknetVersion> for starknet_api::block::StarknetVersion {
             [0, 13, 4, 0] => Ok(Self::V0_13_4),
             [0, 13, 5, 0] => Ok(Self::V0_13_5),
             [0, 14, 0, 0] => Ok(Self::V0_14_0),
+            [0, 14, 1, 0] => Ok(Self::V0_14_1),
             _ => Err(InvalidVersionError(version)),
         }
     }

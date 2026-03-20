@@ -277,7 +277,11 @@ impl Pipeline {
     /// # Returns
     ///
     /// A tuple containing the pipeline instance and a handle for controlling it.
+    /// # Panics
+    ///
+    /// Panics if `chunk_size` is 0.
     pub fn new(provider: DbProviderFactory, chunk_size: u64) -> (Self, PipelineHandle) {
+        assert!(chunk_size > 0, "chunk size must be greater than 0");
         let (tx, rx) = watch::channel(None);
         let (block_tx, _block_rx) = watch::channel(None);
         let handle = PipelineHandle { tx: tx.clone(), block_tx: block_tx.clone() };
@@ -479,6 +483,7 @@ impl Pipeline {
 
         for stage in self.stages.iter_mut() {
             let id = stage.id();
+            let stage_metrics = self.metrics.stage(id);
 
             let span = info_span!(target: "pipeline", "stage.prune", stage = %id);
             let enter = span.entered();
@@ -503,6 +508,7 @@ impl Pipeline {
             info!(target: "pipeline", distance = ?self.config.pruning.distance, from = range.start, to = range.end, "Pruning stage.");
 
             let span_inner = enter.exit();
+            let _guard = stage_metrics.prune_started();
             let PruneOutput { pruned_count } = stage
                 .prune(&prune_input)
                 .instrument(span_inner.clone())

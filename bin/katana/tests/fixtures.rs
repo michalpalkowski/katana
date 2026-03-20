@@ -32,8 +32,7 @@ impl TempDb {
     }
 
     fn open_rw(&self) -> katana_db::Db {
-        katana::cli::db::open_db_rw(self.path_str(), katana_db::version::DbOpenMode::Compat)
-            .unwrap()
+        katana::cli::db::open_db_rw(self.path_str()).unwrap()
     }
 }
 
@@ -122,7 +121,10 @@ fn populate_db(db: &TempDb) {
         };
 
         provider
-            .trie_insert_declared_classes(num, state_updates.declared_classes.clone().into_iter())
+            .trie_insert_declared_classes(
+                num,
+                state_updates.declared_classes.clone().into_iter().collect(),
+            )
             .unwrap();
         provider.trie_insert_contract_updates(num, &state_updates).unwrap();
 

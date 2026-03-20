@@ -24,7 +24,6 @@ use katana_primitives::chain::ChainId;
 use katana_primitives::ContractAddress;
 #[cfg(feature = "server")]
 use katana_rpc_server::cors::HeaderValue;
-use katana_sequencer_node::config::db::DbOpenMode;
 use katana_sequencer_node::config::execution::{
     DEFAULT_INVOCATION_MAX_STEPS, DEFAULT_VALIDATION_MAX_STEPS,
 };
@@ -62,12 +61,12 @@ pub struct DbOptions {
     #[serde(default, alias = "db_dir")]
     pub dir: Option<PathBuf>,
 
-    /// How Katana should open supported older database versions.
-    #[arg(long = "db-open-mode")]
-    #[arg(default_value_t = DbOpenMode::Compat)]
-    #[arg(value_name = "MODE")]
-    #[serde(default, rename = "db_open_mode")]
-    pub open_mode: DbOpenMode,
+    /// Run pending database migrations non-interactively.
+    ///
+    /// This is a no-op if the database is already on the latest version.
+    #[arg(long = "db.auto-migrate")]
+    #[serde(default)]
+    pub migrate: bool,
 }
 
 impl DbOptions {
@@ -80,9 +79,8 @@ impl DbOptions {
             if self.dir.is_none() {
                 self.dir = other.dir.clone();
             }
-
-            if self.open_mode == DbOpenMode::Compat {
-                self.open_mode = other.open_mode;
+            if !self.migrate {
+                self.migrate = other.migrate;
             }
         }
     }
@@ -474,6 +472,14 @@ pub struct ForkingOptions {
     #[arg(long = "fork.block", value_name = "BLOCK", requires = "fork_provider")]
     #[arg(value_parser = parse_block_hash_or_number)]
     pub fork_block: Option<BlockHashOrNumber>,
+
+    /// Disable local dev genesis bootstrap when forking.
+    ///
+    /// By default Katana overlays the forked state with dev genesis allocations so predeployed
+    /// dev accounts are available. Enable this flag for strict lazy-fetch forking where local
+    /// state roots must stay aligned with the forked network.
+    #[arg(long = "fork.no-dev-genesis", requires = "fork_provider")]
+    pub no_dev_genesis: bool,
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -973,6 +979,64 @@ pub struct TrieOptions {
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq)]
+#[command(next_help_heading = "Sync options")]
+pub struct SyncOptions {
+    /// The maximum block number to sync to. Once reached, the pipeline stops
+    /// syncing but the node and RPC server remain running. By default, the
+    /// pipeline syncs to the head of the chain.
+    #[arg(long = "sync.tip")]
+    #[arg(value_name = "BLOCK_NUMBER")]
+    pub tip: Option<u64>,
+
+    /// Custom feeder gateway base URL to sync from instead of the default
+    /// network gateway. Useful for syncing from another katana node's
+    /// feeder gateway.
+    #[arg(long = "sync.gateway")]
+    #[arg(value_name = "URL")]
+    #[arg(conflicts_with = "rpc")]
+    pub gateway: Option<Url>,
+
+    /// JSON-RPC endpoint URL to use as the block download source instead of
+    /// the feeder gateway. When set, blocks and classes are fetched via
+    /// JSON-RPC (`starknet_getBlockWithReceipts`, `starknet_getStateUpdate`,
+    /// `starknet_getClass`).
+    ///
+    /// This is mainly intended for development and testing purposes.
+    #[arg(long = "sync.rpc")]
+    #[arg(value_name = "URL")]
+    #[arg(conflicts_with = "gateway")]
+    pub rpc: Option<Url>,
+
+    /// Maximum number of blocks to process per pipeline iteration before
+    /// advancing to the next chunk.
+    #[arg(long = "sync.chunk-size")]
+    #[arg(value_name = "COUNT")]
+    #[arg(default_value_t = katana_full_node::DEFAULT_SYNC_CHUNK_SIZE)]
+    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+    pub chunk_size: u64,
+
+    /// Number of blocks or classes to download concurrently within each
+    /// chunk.
+    #[arg(long = "sync.download-batch-size")]
+    #[arg(value_name = "COUNT")]
+    #[arg(default_value_t = katana_full_node::DEFAULT_DOWNLOAD_BATCH_SIZE)]
+    #[arg(value_parser = parse_nonzero_usize)]
+    pub download_batch_size: usize,
+}
+
+impl Default for SyncOptions {
+    fn default() -> Self {
+        Self {
+            tip: None,
+            gateway: None,
+            rpc: None,
+            chunk_size: katana_full_node::DEFAULT_SYNC_CHUNK_SIZE,
+            download_batch_size: katana_full_node::DEFAULT_DOWNLOAD_BATCH_SIZE,
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq)]
 #[command(next_help_heading = "Pruning options")]
 pub struct PruningOptions {
     /// State pruning mode
@@ -996,6 +1060,15 @@ impl Default for PruningOptions {
 pub enum PruningMode {
     Archive,
     Full(u64),
+}
+
+fn parse_nonzero_usize(s: &str) -> Result<usize, String> {
+    let n: usize = s.parse().map_err(|e| format!("{e}"))?;
+    if n == 0 {
+        Err("value must be greater than 0".to_string())
+    } else {
+        Ok(n)
+    }
 }
 
 fn parse_pruning_mode(s: &str) -> Result<PruningMode, String> {

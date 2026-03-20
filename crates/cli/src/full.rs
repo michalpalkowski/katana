@@ -5,11 +5,12 @@ use katana_full_node::config::gateway::GatewayConfig;
 use katana_full_node::config::metrics::MetricsConfig;
 use katana_full_node::config::rpc::RpcConfig;
 use katana_full_node::config::trie::TrieConfig;
-use katana_full_node::Network;
+use katana_full_node::{Network, SyncConfig, SyncSource};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::options::*;
+use crate::utils::prompt_db_migration;
 
 pub(crate) const LOG_TARGET: &str = "katana::cli::full";
 
@@ -59,11 +60,8 @@ pub struct FullNodeArgs {
     #[command(flatten)]
     pub pruning: PruningOptions,
 
-    /// The maximum block number to sync to. Once reached, the pipeline stops
-    /// syncing but the node and RPC server remain running.
-    #[arg(long = "sync.tip")]
-    #[arg(value_name = "BLOCK_NUMBER")]
-    pub max_sync_tip: Option<u64>,
+    #[command(flatten)]
+    pub sync: SyncOptions,
 }
 
 impl FullNodeArgs {
@@ -110,7 +108,7 @@ impl FullNodeArgs {
     }
 
     fn config(&self) -> Result<katana_full_node::Config> {
-        let db = self.db_config();
+        let db = self.db_config()?;
         let rpc = self.rpc_config()?;
         let metrics = self.metrics_config();
         let pruning = self.pruning_config();
@@ -125,8 +123,21 @@ impl FullNodeArgs {
             network: self.network,
             gateway_api_key: self.gateway_api_key.clone(),
             trie: TrieConfig { compute: !self.trie.disable },
-            max_sync_tip: self.max_sync_tip,
+            sync: SyncConfig {
+                max_tip: self.sync.tip,
+                source: self.sync_source(),
+                chunk_size: Some(self.sync.chunk_size),
+                download_batch_size: Some(self.sync.download_batch_size),
+            },
         })
+    }
+
+    fn sync_source(&self) -> Option<SyncSource> {
+        if let Some(ref url) = self.sync.rpc {
+            Some(SyncSource::JsonRpc(url.clone()))
+        } else {
+            self.sync.gateway.clone().map(SyncSource::Gateway)
+        }
     }
 
     fn pruning_config(&self) -> katana_full_node::PruningConfig {
@@ -154,8 +165,18 @@ impl FullNodeArgs {
         None
     }
 
-    fn db_config(&self) -> DbConfig {
-        DbConfig { dir: self.db.dir.clone(), open_mode: self.db.open_mode }
+    fn db_config(&self) -> Result<DbConfig> {
+        let mut migrate = self.db.migrate;
+
+        if !migrate {
+            if let Some(ref path) = self.db.dir {
+                if path.exists() {
+                    migrate = prompt_db_migration(path)?;
+                }
+            }
+        }
+
+        Ok(DbConfig { dir: self.db.dir.clone(), migrate })
     }
 
     fn rpc_config(&self) -> Result<RpcConfig> {
@@ -203,45 +224,5 @@ impl FullNodeArgs {
 
     fn tracer_config(&self) -> Option<katana_tracing::TracerConfig> {
         self.tracer.config()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use katana_full_node::config::db::DbOpenMode;
-
-    use super::*;
-
-    #[test]
-    fn full_node_defaults_to_compat_db_open_mode() {
-        let args = FullNodeArgs::parse_from([
-            "katana",
-            "--db-dir",
-            "/tmp/katana-db",
-            "--network",
-            "mainnet",
-        ]);
-        let config = args.config().unwrap();
-
-        assert_eq!(config.db.dir, Some(PathBuf::from("/tmp/katana-db")));
-        assert_eq!(config.db.open_mode, DbOpenMode::Compat);
-    }
-
-    #[test]
-    fn full_node_accepts_strict_db_open_mode() {
-        let args = FullNodeArgs::parse_from([
-            "katana",
-            "--db-dir",
-            "/tmp/katana-db",
-            "--network",
-            "mainnet",
-            "--db-open-mode",
-            "strict",
-        ]);
-        let config = args.config().unwrap();
-
-        assert_eq!(config.db.open_mode, DbOpenMode::Strict);
     }
 }

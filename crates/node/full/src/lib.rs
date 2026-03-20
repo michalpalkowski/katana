@@ -17,6 +17,7 @@ use http::header::CONTENT_TYPE;
 use http::Method;
 use jsonrpsee::RpcModule;
 use katana_chain_spec::ChainSpec;
+use katana_db::{migration, Db};
 use katana_executor::ExecutionFlags;
 use katana_gas_price_oracle::GasPriceOracle;
 use katana_gateway_client::Client as SequencerGateway;
@@ -32,10 +33,12 @@ use katana_rpc_api::starknet::{StarknetApiServer, StarknetTraceApiServer, Starkn
 use katana_rpc_server::cors::Cors;
 use katana_rpc_server::starknet::{StarknetApi, StarknetApiConfig};
 use katana_rpc_server::{RpcServer, RpcServerHandle};
-use katana_stage::blocks::BatchBlockDownloader;
-use katana_stage::{Blocks, Classes, StateTrie};
+use katana_stage::blocks::{BatchBlockDownloader, JsonRpcBlockDownloader};
+use katana_stage::classes::{GatewayClassDownloader, JsonRpcClassDownloader};
+use katana_stage::{Blocks, Classes, IndexHistory, StateTrie};
 use katana_tasks::TaskManager;
 use tracing::{error, info};
+use url::Url;
 
 use crate::pending::PreconfStateFactory;
 
@@ -79,15 +82,41 @@ pub struct Config {
     pub network: Network,
     pub trie: TrieConfig,
     pub gateway: Option<GatewayConfig>,
+    pub sync: SyncConfig,
+}
+
+/// Configuration for the sync pipeline.
+#[derive(Debug, Default)]
+pub struct SyncConfig {
     /// The maximum block number the pipeline will sync to. When set, the pipeline
     /// will stop syncing after reaching this block while the node remains running.
-    pub max_sync_tip: Option<u64>,
+    pub max_tip: Option<u64>,
+    /// The source to sync blocks and classes from.
+    pub source: Option<SyncSource>,
+    /// Maximum number of blocks to process per pipeline iteration.
+    /// Defaults to 256 if not set.
+    pub chunk_size: Option<u64>,
+    /// Number of blocks or classes to download concurrently within each chunk.
+    /// Defaults to 20 if not set.
+    pub download_batch_size: Option<usize>,
+}
+
+pub const DEFAULT_SYNC_CHUNK_SIZE: u64 = 256;
+pub const DEFAULT_DOWNLOAD_BATCH_SIZE: usize = 20;
+
+/// The source from which the node downloads blocks and classes.
+#[derive(Debug, Clone)]
+pub enum SyncSource {
+    /// Custom feeder gateway base URL instead of the default network gateway.
+    Gateway(Url),
+    /// JSON-RPC endpoint URL.
+    JsonRpc(Url),
 }
 
 #[derive(Debug)]
 pub struct Node {
     pub provider: DbProviderFactory,
-    pub db: katana_db::Db,
+    pub db: Db,
     pub pool: FullNodePool,
     pub config: Arc<Config>,
     pub task_manager: TaskManager,
@@ -118,14 +147,26 @@ impl Node {
 
         info!(target: "node", path = %path.display(), "Initializing database.");
 
-        let db = katana_db::Db::new_with_mode(path, config.db.open_mode)?;
+        let db = Db::new(path)?;
+
+        // --- Perform database migration, if needed
+        if config.db.migrate {
+            migration::Migration::new_v9(&db).run()?;
+        }
+
         let storage_provider = DbProviderFactory::new(db.clone());
 
         // --- build gateway client
 
-        let gateway_client = match config.network {
-            Network::Mainnet => SequencerGateway::mainnet(),
-            Network::Sepolia => SequencerGateway::sepolia(),
+        let gateway_client = if let Some(SyncSource::Gateway(ref base_url)) = config.sync.source {
+            let gateway = base_url.join("gateway").expect("valid URL join");
+            let feeder_gateway = base_url.join("feeder_gateway").expect("valid URL join");
+            SequencerGateway::new(gateway, feeder_gateway)
+        } else {
+            match config.network {
+                Network::Mainnet => SequencerGateway::mainnet(),
+                Network::Sepolia => SequencerGateway::sepolia(),
+            }
         };
 
         let gateway_client = if let Some(ref key) = config.gateway_api_key {
@@ -141,11 +182,14 @@ impl Node {
 
         // --- build pipeline
 
-        let (mut pipeline, pipeline_handle) = Pipeline::new(storage_provider.clone(), 256);
+        let chunk_size = config.sync.chunk_size.unwrap_or(DEFAULT_SYNC_CHUNK_SIZE);
+        let batch_size = config.sync.download_batch_size.unwrap_or(DEFAULT_DOWNLOAD_BATCH_SIZE);
+
+        let (mut pipeline, pipeline_handle) = Pipeline::new(storage_provider.clone(), chunk_size);
 
         // Configure pipeline
         pipeline.set_config(PipelineConfig {
-            max_sync_tip: config.max_sync_tip,
+            max_sync_tip: config.sync.max_tip,
             pruning: config.pruning.clone(),
         });
 
@@ -154,9 +198,33 @@ impl Node {
             Network::Sepolia => katana_primitives::chain::ChainId::SEPOLIA,
         };
 
-        let block_downloader = BatchBlockDownloader::new_gateway(gateway_client.clone(), 20);
-        pipeline.add_stage(Blocks::new(storage_provider.clone(), block_downloader, chain_id));
-        pipeline.add_stage(Classes::new(storage_provider.clone(), gateway_client.clone(), 20));
+        if let Some(SyncSource::JsonRpc(ref rpc_url)) = config.sync.source {
+            let rpc_client = katana_starknet::rpc::Client::new(rpc_url.clone());
+            let block_downloader =
+                JsonRpcBlockDownloader::new_json_rpc(rpc_client.clone(), batch_size);
+            pipeline.add_stage(Blocks::new(
+                storage_provider.clone(),
+                block_downloader,
+                chain_id,
+                task_spawner.clone(),
+            ));
+
+            let class_downloader = JsonRpcClassDownloader::new(rpc_client, batch_size);
+            pipeline.add_stage(Classes::new(storage_provider.clone(), class_downloader));
+        } else {
+            let block_downloader =
+                BatchBlockDownloader::new_gateway(gateway_client.clone(), batch_size);
+            pipeline.add_stage(Blocks::new(
+                storage_provider.clone(),
+                block_downloader,
+                chain_id,
+                task_spawner.clone(),
+            ));
+
+            let class_downloader = GatewayClassDownloader::new(gateway_client.clone(), batch_size);
+            pipeline.add_stage(Classes::new(storage_provider.clone(), class_downloader));
+        }
+        pipeline.add_stage(IndexHistory::new(storage_provider.clone(), task_spawner.clone()));
         if config.trie.compute {
             pipeline.add_stage(StateTrie::new(storage_provider.clone(), task_spawner.clone()));
         }
