@@ -36,6 +36,8 @@ impl StarknetVersion {
     pub const V0_13_2: Self = Self::new([0, 13, 2, 0]);
     /// Starknet version 0.13.4.
     pub const V0_13_4: Self = Self::new([0, 13, 4, 0]);
+    /// Starknet version 0.14.2.
+    pub const V0_14_2: Self = Self::new([0, 14, 2, 0]);
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -176,6 +178,11 @@ impl TryFrom<StarknetVersion> for starknet_api::block::StarknetVersion {
             [0, 13, 5, 0] => Ok(Self::V0_13_5),
             [0, 14, 0, 0] => Ok(Self::V0_14_0),
             [0, 14, 1, 0] => Ok(Self::V0_14_1),
+            // `starknet_api`/`blockifier` in our current sequencer dependency do not expose
+            // Starknet v0.14.2 yet. Alias it to v0.14.1 so Sepolia blocks do not panic during
+            // execution until we can upgrade those crates to a revision with native v0.14.2
+            // support and matching versioned constants.
+            [0, 14, 2, 0] => Ok(Self::V0_14_1),
             _ => Err(InvalidVersionError(version)),
         }
     }
@@ -253,6 +260,15 @@ mod tests {
         assert!(StarknetVersion::UNVERSIONED < StarknetVersion::V0_7_0);
         assert!(StarknetVersion::V0_7_0 < StarknetVersion::V0_13_2);
         assert!(StarknetVersion::V0_13_2 < CURRENT_STARKNET_VERSION);
+        assert!(CURRENT_STARKNET_VERSION < StarknetVersion::V0_14_2);
+    }
+
+    #[test]
+    fn supported_version_0_14_2_falls_back_to_starknet_api_0_14_1() {
+        let version = StarknetVersion::V0_14_2;
+        let converted: starknet_api::block::StarknetVersion = version.try_into().unwrap();
+
+        assert_eq!(converted, starknet_api::block::StarknetVersion::V0_14_1);
     }
 
     #[cfg(feature = "serde")]
