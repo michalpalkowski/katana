@@ -36,7 +36,8 @@ pub struct TeeQuoteResponse {
     pub fork_block_number: Option<BlockNumber>,
 
     /// Merkle root of all events in the attested block.
-    /// Included in report_data: Poseidon(state_root, block_hash, fork_block, events_commitment).
+    /// Included in report_data[0..32]:
+    /// Poseidon(state_root, block_hash, fork_block, events_commitment).
     pub events_commitment: Felt,
 }
 

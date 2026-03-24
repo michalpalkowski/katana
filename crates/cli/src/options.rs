@@ -1032,9 +1032,13 @@ pub struct TeeOptions {
     #[serde(default)]
     pub tee_provider: Option<katana_tee::TeeProviderType>,
 
-    /// SHA-256 hash of security-critical runtime arguments for attestation binding.
-    /// Computed by the hypervisor init script and passed automatically.
-    #[arg(long = "tee.args-hash", value_name = "HEX")]
+    /// Canonical SHA-256 hash of security-critical runtime args.
+    ///
+    /// This must be provided by the measured init/runtime environment
+    /// (for example the hypervisor guest init script). Katana consumes
+    /// this value directly instead of recomputing it locally. In the stable
+    /// forked TEE flow this includes `--fork.block`.
+    #[arg(long = "tee.args-hash", value_name = "HEX32", requires = "tee_provider")]
     #[serde(default)]
     pub args_hash: Option<String>,
 }
