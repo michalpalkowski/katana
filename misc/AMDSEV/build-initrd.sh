@@ -352,6 +352,80 @@ resolve_control_port() {
     return 1
 }
 
+## Compute SHA-256 hash of security-critical Katana runtime args.
+##
+## Extracts and sorts critical args (--fork.block, --fork.provider,
+## --fork.no-dev-genesis, --tee.provider) from the comma-separated
+## argument string, then hashes the canonical form.
+##
+## Must match the canonical format used by:
+##   - katana-tee Cairo contract (compute_katana_args_hash)
+##   - sharding_operator Rust (calls::compute_args_hash)
+compute_critical_args_hash() {
+    RAW_ARGS="$*"
+
+    CRITICAL_KV_KEYS="--fork.block --fork.provider --tee.provider"
+    CRITICAL_FLAG_KEYS="--fork.no-dev-genesis"
+
+    OLD_IFS="$IFS"
+    IFS=","
+    # shellcheck disable=SC2086
+    set -- $RAW_ARGS
+    IFS="$OLD_IFS"
+
+    EXTRACTED=""
+    while [ $# -gt 0 ]; do
+        TOKEN="$1"
+        shift
+
+        IS_KV=0
+        for KEY in $CRITICAL_KV_KEYS; do
+            if [ "$TOKEN" = "$KEY" ]; then
+                IS_KV=1
+                break
+            fi
+        done
+        if [ "$IS_KV" = "1" ]; then
+            if [ $# -gt 0 ]; then
+                VALUE="$1"
+                shift
+                if [ -n "$EXTRACTED" ]; then
+                    EXTRACTED="$EXTRACTED
+$TOKEN,$VALUE"
+                else
+                    EXTRACTED="$TOKEN,$VALUE"
+                fi
+            fi
+            continue
+        fi
+
+        IS_FLAG=0
+        for KEY in $CRITICAL_FLAG_KEYS; do
+            if [ "$TOKEN" = "$KEY" ]; then
+                IS_FLAG=1
+                break
+            fi
+        done
+        if [ "$IS_FLAG" = "1" ]; then
+            if [ -n "$EXTRACTED" ]; then
+                EXTRACTED="$EXTRACTED
+$TOKEN"
+            else
+                EXTRACTED="$TOKEN"
+            fi
+        fi
+    done
+
+    if [ -z "$EXTRACTED" ]; then
+        return
+    fi
+
+    SORTED=$(echo "$EXTRACTED" | sort)
+    JOINED=$(echo "$SORTED" | tr '\n' ',' | sed 's/,$//')
+    HASH=$(echo -n "$JOINED" | sha256sum | cut -d ' ' -f 1)
+    echo "$HASH"
+}
+
 handle_control_command() {
     RAW_CMD="$1"
     CMD="${RAW_CMD%% *}"
@@ -368,9 +442,22 @@ handle_control_command() {
                 return 0
             fi
 
+            # Compute args hash before converting commas to spaces
+            ARGS_HASH=""
+            if [ -n "$CMD_PAYLOAD" ]; then
+                ARGS_HASH=$(compute_critical_args_hash "$CMD_PAYLOAD")
+            fi
+
             KATANA_ARGS=""
             if [ -n "$CMD_PAYLOAD" ]; then
                 KATANA_ARGS="$(echo "$CMD_PAYLOAD" | tr ',' ' ')"
+            fi
+
+            # Append --tee.args-hash if critical args were present
+            HASH_FLAG=""
+            if [ -n "$ARGS_HASH" ]; then
+                HASH_FLAG="--tee.args-hash=$ARGS_HASH"
+                log "Critical args hash: $ARGS_HASH"
             fi
 
             log "Starting katana asynchronously..."
@@ -378,7 +465,7 @@ handle_control_command() {
             # Close fd 3 (control port) for child so it doesn't inherit it.
             # Without this, the virtio-serial port stays "busy" after Katana exits
             # and the outer loop can't reopen it.
-            /bin/katana --db-dir="$KATANA_DB_DIR" $KATANA_ARGS 3>&- &
+            /bin/katana --db-dir="$KATANA_DB_DIR" $HASH_FLAG $KATANA_ARGS 3>&- &
             KATANA_PID=$!
             KATANA_EXIT_CODE="running"
             respond_control "ok started pid=$KATANA_PID"
