@@ -126,7 +126,7 @@ Example:
 
 ```sh
 # Start Katana with comma-separated CLI args
-printf 'start --http.addr,0.0.0.0,--http.port,5050,--tee.provider,sev-snp\n' \
+printf 'start --http.addr,0.0.0.0,--http.port,5050,--tee.provider,sev-snp,--tee.args-hash,0000000000000000000000000000000000000000000000000000000000000000\n' \
   | socat - UNIX-CONNECT:/tmp/katana-control.sock
 
 # Check launcher status
@@ -144,8 +144,11 @@ sudo ./misc/AMDSEV/start-vm.sh
 # Or specify a custom boot components directory
 sudo ./misc/AMDSEV/start-vm.sh /path/to/boot-components
 
+# Or provide a measured tee.args-hash explicitly
+KATANA_ARGS_HASH_HEX=<hex32> sudo ./misc/AMDSEV/start-vm.sh
+
 # Or customize Katana runtime flags (comma-separated)
-sudo ./misc/AMDSEV/start-vm.sh --katana-args "--http.addr,0.0.0.0,--http.port,5050,--tee.provider,sev-snp,--dev"
+sudo ./misc/AMDSEV/start-vm.sh --katana-args "--http.addr,0.0.0.0,--http.port,5050,--tee.provider,sev-snp,--tee.args-hash,0000000000000000000000000000000000000000000000000000000000000000,--dev"
 ```
 
 The script:
@@ -154,6 +157,11 @@ The script:
 - Keeps kernel cmdline stable (`console=ttyS0`) for deterministic measurement
 - Starts Katana asynchronously via virtio-serial control channel
 - Forwards RPC port 5050 to host port 15051
+
+When TEE attestation is enabled, Katana now requires `--tee.args-hash`.
+`start-vm.sh` auto-appends `--tee.args-hash,$KATANA_ARGS_HASH_HEX` when `--tee.provider`
+is present and the hash is missing. The default value is all zeros for local smoke tests;
+real measured deployments should pass the canonical runtime hash explicitly.
 - Outputs serial log to a temp file and follows it
 
 ## Isolated Initrd Testing

@@ -58,8 +58,19 @@ usage() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOT_DIR="${SCRIPT_DIR}/output/qemu"
+KATANA_ARGS_HASH_HEX="${KATANA_ARGS_HASH_HEX:-0000000000000000000000000000000000000000000000000000000000000000}"
 KATANA_ARGS_CSV="--http.addr,0.0.0.0,--http.port,5050,--tee.provider,sev-snp"
 AUTO_START_KATANA=1
+
+ensure_tee_args_hash() {
+    local args_csv="$1"
+
+    if [[ "$args_csv" == *"--tee.provider,"* ]] && [[ "$args_csv" != *"--tee.args-hash,"* ]]; then
+        printf '%s,%s,%s' "$args_csv" "--tee.args-hash" "$KATANA_ARGS_HASH_HEX"
+    else
+        printf '%s' "$args_csv"
+    fi
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -95,6 +106,8 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+KATANA_ARGS_CSV="$(ensure_tee_args_hash "$KATANA_ARGS_CSV")"
 
 # ------------------------------------------------------------------------------
 # Launch measurement inputs (must match values documented above)
@@ -308,6 +321,9 @@ if [[ "$AUTO_START_KATANA" -eq 1 ]]; then
     # success via the serial log instead.
     echo ""
     echo "Sending async Katana start command..."
+    if [[ "$KATANA_ARGS_CSV" == *"--tee.provider,"* ]]; then
+        echo "  Using tee.args-hash=${KATANA_ARGS_HASH_HEX}"
+    fi
     send_control_command "start $KATANA_ARGS_CSV"
     echo "  Command sent (verifying via serial log)"
 

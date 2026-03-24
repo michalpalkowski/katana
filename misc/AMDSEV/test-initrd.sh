@@ -32,6 +32,7 @@ HOST_RPC_PORT=15052
 VM_RPC_PORT=5050
 BOOT_TIMEOUT=90
 TEST_DISK_SIZE="${TEST_DISK_SIZE:-1G}"
+KATANA_ARGS_HASH_HEX="${KATANA_ARGS_HASH_HEX:-0000000000000000000000000000000000000000000000000000000000000000}"
 
 TEMP_DIR="$(mktemp -d /tmp/katana-amdsev-initrd-test.XXXXXX)"
 SERIAL_LOG="${TEMP_DIR}/serial.log"
@@ -119,7 +120,7 @@ wait_for_control_channel() {
 }
 
 start_katana_via_control_channel() {
-    local start_cmd="start --http.addr,0.0.0.0,--http.port,${VM_RPC_PORT},--tee.provider,sev-snp"
+    local start_cmd="start --http.addr,0.0.0.0,--http.port,${VM_RPC_PORT},--tee.provider,sev-snp,--tee.args-hash,${KATANA_ARGS_HASH_HEX}"
     local response=""
 
     for ((elapsed = 1; elapsed <= BOOT_TIMEOUT; elapsed++)); do
