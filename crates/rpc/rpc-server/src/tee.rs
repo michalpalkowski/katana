@@ -311,7 +311,7 @@ where
 
         // Get block header for events_commitment
         let header = provider
-            .header_by_number(block_id)
+            .header_by_number(block_number)
             .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
             .ok_or_else(|| {
                 TeeApiError::EventProofError(format!("Block {block_number} not found"))
