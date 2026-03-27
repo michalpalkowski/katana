@@ -55,18 +55,19 @@ where
 
     /// Compute the 64-byte report data for attestation.
     /// report_data layout:
-    ///   [0..32]  = Poseidon(state_root, block_hash, fork_block_number, events_commitment)
+    ///   [0..32]  = Poseidon(state_root, block_hash, fork_block_number, events_commitment, fork_state_root)
     ///   [32..64] = SHA-256 hash of security-critical runtime args
     fn compute_report_data(
         &self,
         state_root: Felt,
         block_hash: Felt,
         events_commitment: Felt,
+        fork_state_root: Felt,
     ) -> [u8; 64] {
         let fb = Felt::from(self.fork_block_number.unwrap_or(0));
-        let commitment = Poseidon::hash_array(&[state_root, block_hash, fb, events_commitment]);
+        let commitment =
+            Poseidon::hash_array(&[state_root, block_hash, fb, events_commitment, fork_state_root]);
 
-        // Convert Felt to bytes (32 bytes) and pad to 64 bytes
         let commitment_bytes = commitment.to_bytes_be();
 
         let mut report_data = [0u8; 64];
@@ -79,6 +80,7 @@ where
             %block_hash,
             fork_block_number = ?self.fork_block_number,
             %events_commitment,
+            %fork_state_root,
             %commitment,
             args_hash = %hex::encode(self.args_hash),
             "Computed report data for attestation"
@@ -154,8 +156,31 @@ where
         let state_root = header.state_root;
         let events_commitment = header.events_commitment;
 
-        // Compute report data: Poseidon(state_root, block_hash, fork_block, events_commitment)
-        let report_data = self.compute_report_data(state_root, block_hash, events_commitment);
+        // In fork mode, include the fork block's state root so SP1 can verify
+        // initial storage proofs against the TEE-attested fork state.
+        let fork_state_root = match self.fork_block_number {
+            Some(fork_num) => {
+                let fork_header = provider
+                    .header_by_number(fork_num)
+                    .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
+                    .ok_or_else(|| {
+                        TeeApiError::ProviderError(format!(
+                            "Header not found for fork block {fork_num}"
+                        ))
+                    })?;
+                if fork_header.state_root == Felt::ZERO {
+                    return Err(TeeApiError::ProviderError(format!(
+                        "Fork block {fork_num} has zero state root — trie not yet committed?"
+                    ))
+                    .into());
+                }
+                fork_header.state_root
+            }
+            None => Felt::ZERO,
+        };
+
+        let report_data =
+            self.compute_report_data(state_root, block_hash, events_commitment, fork_state_root);
 
         // Generate the attestation quote
         let quote = self
@@ -183,6 +208,7 @@ where
             block_number: block_id,
             fork_block_number: self.fork_block_number,
             events_commitment,
+            fork_state_root,
         })
     }
 
