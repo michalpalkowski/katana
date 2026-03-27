@@ -13,6 +13,7 @@ use std::num::NonZeroU128;
 use std::path::PathBuf;
 
 use clap::Args;
+use katana_full_node::SyncStagesList;
 use katana_genesis::Genesis;
 #[cfg(feature = "server")]
 use katana_node_config::gateway::{
@@ -966,16 +967,92 @@ impl TracerOptions {
     }
 }
 
-#[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[command(next_help_heading = "Trie options")]
-pub struct TrieOptions {
-    /// Disable state trie computation.
+#[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq)]
+#[command(next_help_heading = "Sync options")]
+pub struct SyncOptions {
+    /// The maximum block number to sync to. Once reached, the pipeline stops
+    /// syncing but the node and RPC server remain running. By default, the
+    /// pipeline syncs to the head of the chain.
+    #[arg(long = "sync.tip")]
+    #[arg(value_name = "BLOCK_NUMBER")]
+    pub tip: Option<u64>,
+
+    /// Custom feeder gateway base URL to sync from instead of the default
+    /// network gateway. Useful for syncing from another katana node's
+    /// feeder gateway.
+    #[arg(long = "sync.gateway")]
+    #[arg(value_name = "URL")]
+    #[arg(conflicts_with = "rpc")]
+    pub gateway: Option<Url>,
+
+    /// JSON-RPC endpoint URL to use as the block download source instead of
+    /// the feeder gateway. When set, blocks and classes are fetched via
+    /// JSON-RPC (`starknet_getBlockWithReceipts`, `starknet_getStateUpdate`,
+    /// `starknet_getClass`).
     ///
-    /// By default, the node computes and verifies state roots against expected values
-    /// from block headers during synchronization. Use this flag to skip trie computation.
-    #[arg(long = "trie.disable")]
+    /// This is mainly intended for development and testing purposes.
+    #[arg(long = "sync.rpc")]
+    #[arg(value_name = "URL")]
+    #[arg(conflicts_with = "gateway")]
+    pub rpc: Option<Url>,
+
+    /// Maximum number of blocks to process per pipeline iteration before
+    /// advancing to the next chunk.
+    #[arg(long = "sync.chunk-size")]
+    #[arg(value_name = "COUNT")]
+    #[arg(default_value_t = katana_full_node::DEFAULT_SYNC_CHUNK_SIZE)]
+    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+    pub chunk_size: u64,
+
+    /// Pipeline stages to run during sync.
+    ///
+    /// Comma-separated list of stages. Available stages: blocks, classes,
+    /// indexhistory, statetrie. By default, all stages are enabled.
+    #[arg(long = "sync.stages", value_name = "STAGES")]
+    #[arg(value_parser = SyncStagesList::parse)]
     #[serde(default)]
-    pub disable: bool,
+    pub stages: Option<SyncStagesList>,
+}
+
+impl Default for SyncOptions {
+    fn default() -> Self {
+        Self {
+            tip: None,
+            gateway: None,
+            rpc: None,
+            stages: None,
+            chunk_size: katana_full_node::DEFAULT_SYNC_CHUNK_SIZE,
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq)]
+#[command(next_help_heading = "Stage options")]
+pub struct StageOptions {
+    /// Number of blocks to download concurrently within each chunk
+    /// in the Blocks stage.
+    #[arg(long = "stage.blocks.batch-size")]
+    #[arg(value_name = "COUNT")]
+    #[arg(default_value_t = katana_full_node::DEFAULT_BLOCKS_BATCH_SIZE)]
+    #[arg(value_parser = parse_nonzero_usize)]
+    pub blocks_batch_size: usize,
+
+    /// Number of classes to download concurrently within each chunk
+    /// in the Classes stage.
+    #[arg(long = "stage.classes.batch-size")]
+    #[arg(value_name = "COUNT")]
+    #[arg(default_value_t = katana_full_node::DEFAULT_CLASSES_BATCH_SIZE)]
+    #[arg(value_parser = parse_nonzero_usize)]
+    pub classes_batch_size: usize,
+}
+
+impl Default for StageOptions {
+    fn default() -> Self {
+        Self {
+            blocks_batch_size: katana_full_node::DEFAULT_BLOCKS_BATCH_SIZE,
+            classes_batch_size: katana_full_node::DEFAULT_CLASSES_BATCH_SIZE,
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize, PartialEq)]
@@ -1002,6 +1079,15 @@ impl Default for PruningOptions {
 pub enum PruningMode {
     Archive,
     Full(u64),
+}
+
+fn parse_nonzero_usize(s: &str) -> Result<usize, String> {
+    let n: usize = s.parse().map_err(|e| format!("{e}"))?;
+    if n == 0 {
+        Err("value must be greater than 0".to_string())
+    } else {
+        Ok(n)
+    }
 }
 
 fn parse_pruning_mode(s: &str) -> Result<PruningMode, String> {

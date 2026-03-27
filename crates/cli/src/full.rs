@@ -4,11 +4,9 @@ use katana_full_node::config::db::DbConfig;
 use katana_full_node::config::gateway::GatewayConfig;
 use katana_full_node::config::metrics::MetricsConfig;
 use katana_full_node::config::rpc::RpcConfig;
-use katana_full_node::config::trie::TrieConfig;
-use katana_full_node::Network;
+use katana_full_node::{Network, SyncConfig, SyncSource};
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use url::Url;
 
 use crate::options::*;
 use crate::utils::prompt_db_migration;
@@ -56,23 +54,13 @@ pub struct FullNodeArgs {
     pub gateway: GatewayOptions,
 
     #[command(flatten)]
-    pub trie: TrieOptions,
-
-    #[command(flatten)]
     pub pruning: PruningOptions,
 
-    /// The maximum block number to sync to. Once reached, the pipeline stops
-    /// syncing but the node and RPC server remain running.
-    #[arg(long = "sync.tip")]
-    #[arg(value_name = "BLOCK_NUMBER")]
-    pub max_sync_tip: Option<u64>,
+    #[command(flatten)]
+    pub sync: SyncOptions,
 
-    /// Custom feeder gateway base URL to sync from instead of the default
-    /// network gateway. Useful for syncing from another katana node's
-    /// feeder gateway.
-    #[arg(long = "sync.gateway")]
-    #[arg(value_name = "URL")]
-    pub sync_gateway: Option<Url>,
+    #[command(flatten)]
+    pub stage: StageOptions,
 }
 
 impl FullNodeArgs {
@@ -133,10 +121,25 @@ impl FullNodeArgs {
             gateway,
             network: self.network,
             gateway_api_key: self.gateway_api_key.clone(),
-            trie: TrieConfig { compute: !self.trie.disable },
-            max_sync_tip: self.max_sync_tip,
-            sync_gateway: self.sync_gateway.clone(),
+            sync: SyncConfig {
+                max_tip: self.sync.tip,
+                source: self.sync_source(),
+                chunk_size: Some(self.sync.chunk_size),
+                stages: self.sync.stages.clone().unwrap_or_default(),
+                stage: katana_full_node::StageConfig {
+                    blocks_batch_size: self.stage.blocks_batch_size,
+                    classes_batch_size: self.stage.classes_batch_size,
+                },
+            },
         })
+    }
+
+    fn sync_source(&self) -> Option<SyncSource> {
+        if let Some(ref url) = self.sync.rpc {
+            Some(SyncSource::JsonRpc(url.clone()))
+        } else {
+            self.sync.gateway.clone().map(SyncSource::Gateway)
+        }
     }
 
     fn pruning_config(&self) -> katana_full_node::PruningConfig {

@@ -16,7 +16,9 @@ use katana_db::models::list::BlockChangeList;
 use katana_db::models::stage::{ExecutionCheckpoint, PruningCheckpoint};
 use katana_db::models::state::HistoricalStateRetention;
 use katana_db::models::storage::{ContractStorageEntry, ContractStorageKey, StorageEntry};
-use katana_db::models::{ReceiptEnvelope, TxEnvelope, VersionedHeader, VersionedTx};
+use katana_db::models::{
+    ReceiptEnvelope, StateUpdateEnvelope, TxEnvelope, VersionedHeader, VersionedTx,
+};
 use katana_db::tables;
 use katana_primitives::block::{
     Block, BlockHash, BlockHashOrNumber, BlockNumber, BlockWithTxHashes, FinalityStatus, Header,
@@ -81,12 +83,12 @@ impl<Tx: DbTx> DbProvider<Tx> {
         &self,
         block_number: BlockNumber,
     ) -> ProviderResult<StateUpdates> {
-        let state_update = self
+        let envelope = self
             .0
             .get::<tables::BlockStateUpdates>(block_number)?
             .ok_or(ProviderError::MissingBlockStateUpdate(block_number))?;
 
-        Ok(state_update)
+        Ok(StateUpdates::from(envelope))
     }
 }
 
@@ -282,7 +284,7 @@ impl<Tx: DbTx> TransactionProvider for DbProvider<Tx> {
         if let Some(num) = self.0.get::<tables::TxNumbers>(hash)? {
             let res = self.0.get::<tables::Transactions>(num)?;
             let envelope = res.ok_or(ProviderError::MissingTx(num))?;
-            Ok(Some(TxWithHash { hash, transaction: envelope.inner.into() }))
+            Ok(Some(TxWithHash { hash, transaction: envelope.payload.into() }))
         } else {
             Ok(None)
         }
@@ -307,7 +309,7 @@ impl<Tx: DbTx> TransactionProvider for DbProvider<Tx> {
             if let Some(envelope) = self.0.get::<tables::Transactions>(i)? {
                 let res = self.0.get::<tables::TxHashes>(i)?;
                 let hash = res.ok_or(ProviderError::MissingTxHash(i))?;
-                transactions.push(TxWithHash { hash, transaction: envelope.inner.into() });
+                transactions.push(TxWithHash { hash, transaction: envelope.payload.into() });
             };
         }
 
@@ -347,7 +349,7 @@ impl<Tx: DbTx> TransactionProvider for DbProvider<Tx> {
                 let res = self.0.get::<tables::Transactions>(num)?;
                 let envelope = res.ok_or(ProviderError::MissingTx(num))?;
 
-                Ok(Some(TxWithHash { hash, transaction: envelope.inner.into() }))
+                Ok(Some(TxWithHash { hash, transaction: envelope.payload.into() }))
             }
 
             _ => Ok(None),
@@ -528,8 +530,13 @@ impl<Tx: DbTx> BlockEnvProvider for DbProvider<Tx> {
     }
 }
 
-impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
-    fn insert_block_with_states_and_receipts(
+impl<Tx: DbTxMut> DbProvider<Tx> {
+    /// Stores block data without building historical state indices.
+    ///
+    /// This stores: headers, hashes, body indices, `BlockStateUpdates`, txs, receipts, traces,
+    /// class artifacts, compiled class hashes, class declarations, deprecated declarations,
+    /// migrated compiled class hashes.
+    pub fn insert_block_data(
         &self,
         block: SealedBlockWithStatus,
         states: StateUpdatesWithClasses,
@@ -539,7 +546,6 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
         let block_hash = block.block.hash;
         let block_number = block.block.header.number;
         let StateUpdatesWithClasses { state_updates, classes } = states;
-        let canonical_state_update = state_updates.clone();
 
         let block_header = block.block.header;
         let transactions = block.block.body;
@@ -553,7 +559,10 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
         self.0.put::<tables::BlockStatusses>(block_number, block.status)?;
 
         self.0.put::<tables::Headers>(block_number, VersionedHeader::from(block_header))?;
-        self.0.put::<tables::BlockStateUpdates>(block_number, canonical_state_update)?;
+        self.0.put::<tables::BlockStateUpdates>(
+            block_number,
+            StateUpdateEnvelope::from(state_updates.clone()),
+        )?;
         self.0.put::<tables::BlockBodyIndices>(block_number, block_body_indices)?;
 
         // Store base transaction details
@@ -608,14 +617,149 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
             self.0.put::<tables::MigratedCompiledClassHashes>(block_number, entry)?;
         }
 
+        Ok(())
+    }
+
+    /// Builds historical state indices for a range of blocks in bulk.
+    ///
+    /// This is an optimized path for first sync (when the history tables are empty). Instead of
+    /// doing read-modify-write per block, it accumulates all changes in memory and writes each
+    /// key once at the end. The DupSort history tables (`StorageChangeHistory`,
+    /// `NonceChangeHistory`, `ClassChangeHistory`) are written per-block since blocks are
+    /// processed in order and the keys are monotonically increasing.
+    ///
+    /// Updates the same tables as [`insert_state_history`](Self::insert_state_history).
+    pub fn insert_state_history_bulk(
+        &self,
+        blocks: impl IntoIterator<Item = (BlockNumber, StateUpdates)>,
+    ) -> ProviderResult<()> {
+        // Accumulated state: written once per key at the end.
+        let mut storage_change_sets: BTreeMap<ContractStorageKey, BlockChangeList> =
+            BTreeMap::new();
+        let mut contract_info_change_sets: BTreeMap<ContractAddress, ContractInfoChangeList> =
+            BTreeMap::new();
+        // Track latest storage value per (addr, key) — only the final value is written.
+        let mut latest_storage: BTreeMap<(ContractAddress, katana_primitives::Felt), StorageEntry> =
+            BTreeMap::new();
+        // Track latest contract info per address — only the final state is written.
+        let mut latest_contract_info: BTreeMap<ContractAddress, GenericContractInfo> =
+            BTreeMap::new();
+
+        for (block_number, state_updates) in blocks {
+            // -- storage changes --
+            for (addr, entries) in &state_updates.storage_updates {
+                for (key, value) in entries {
+                    let entry = StorageEntry { key: *key, value: *value };
+
+                    // Accumulate change set
+                    let changeset_key = ContractStorageKey { contract_address: *addr, key: *key };
+                    storage_change_sets
+                        .entry(changeset_key.clone())
+                        .or_default()
+                        .insert(block_number);
+
+                    // Track latest value
+                    latest_storage.insert((*addr, *key), entry);
+
+                    // Write per-block history entry (block-keyed DupSort, sequential)
+                    self.0.put::<tables::StorageChangeHistory>(
+                        block_number,
+                        ContractStorageEntry { key: changeset_key, value: *value },
+                    )?;
+                }
+            }
+
+            // -- deployed contracts --
+            for (addr, class_hash) in &state_updates.deployed_contracts {
+                let info = latest_contract_info.entry(*addr).or_default();
+                info.class_hash = *class_hash;
+
+                contract_info_change_sets
+                    .entry(*addr)
+                    .or_default()
+                    .class_change_list
+                    .insert(block_number);
+
+                let class_change_key = ContractClassChange::deployed(*addr, *class_hash);
+                self.0.put::<tables::ClassChangeHistory>(block_number, class_change_key)?;
+            }
+
+            // -- replaced classes --
+            for (addr, new_class_hash) in &state_updates.replaced_classes {
+                let info = latest_contract_info.entry(*addr).or_default();
+                info.class_hash = *new_class_hash;
+
+                contract_info_change_sets
+                    .entry(*addr)
+                    .or_default()
+                    .class_change_list
+                    .insert(block_number);
+
+                let class_change_key = ContractClassChange::replaced(*addr, *new_class_hash);
+                self.0.put::<tables::ClassChangeHistory>(block_number, class_change_key)?;
+            }
+
+            // -- nonce updates --
+            for (addr, nonce) in &state_updates.nonce_updates {
+                let info = latest_contract_info.entry(*addr).or_default();
+                info.nonce = *nonce;
+
+                contract_info_change_sets
+                    .entry(*addr)
+                    .or_default()
+                    .nonce_change_list
+                    .insert(block_number);
+
+                let nonce_change_key =
+                    ContractNonceChange { contract_address: *addr, nonce: *nonce };
+                self.0.put::<tables::NonceChangeHistory>(block_number, nonce_change_key)?;
+            }
+        }
+
+        // Flush accumulated storage change sets (one write per key).
+        for (key, block_list) in storage_change_sets {
+            self.0.put::<tables::StorageChangeSet>(key, block_list)?;
+        }
+
+        // Flush latest storage values (one write per (addr, key)).
+        {
+            let mut storage_cursor = self.0.cursor_dup_mut::<tables::ContractStorage>()?;
+            for ((addr, _), entry) in &latest_storage {
+                storage_cursor.upsert(*addr, *entry)?;
+            }
+        }
+
+        // Flush accumulated contract info change sets (one write per address).
+        for (addr, change_set) in contract_info_change_sets {
+            self.0.put::<tables::ContractInfoChangeSet>(addr, change_set)?;
+        }
+
+        // Flush latest contract info (one write per address).
+        for (addr, info) in latest_contract_info {
+            self.0.put::<tables::ContractInfo>(addr, info)?;
+        }
+
+        Ok(())
+    }
+
+    /// Builds historical state indices for a single block from its state updates.
+    ///
+    /// This updates: `ContractStorage`, `StorageChangeSet`, `StorageChangeHistory`,
+    /// `ContractInfo`, `ContractInfoChangeSet`, `ClassChangeHistory`, `NonceChangeHistory`.
+    pub fn insert_state_history(
+        &self,
+        block_number: BlockNumber,
+        state_updates: &StateUpdates,
+    ) -> ProviderResult<()> {
         // insert storage changes
         {
             let mut storage_cursor = self.0.cursor_dup_mut::<tables::ContractStorage>()?;
-            for (addr, entries) in state_updates.storage_updates {
-                let entries = entries.into_iter().map(|(key, value)| StorageEntry { key, value });
+            for (addr, entries) in &state_updates.storage_updates {
+                let entries =
+                    entries.iter().map(|(key, value)| StorageEntry { key: *key, value: *value });
 
                 for entry in entries {
-                    match storage_cursor.seek_by_key_subkey(addr, entry.key)? {
+                    match storage_cursor.seek_by_key_subkey(*addr, entry.key)? {
                         Some(current) if current.key == entry.key => {
                             storage_cursor.delete_current()?;
                         }
@@ -625,7 +769,7 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
 
                     // update block list in the change set
                     let changeset_key =
-                        ContractStorageKey { contract_address: addr, key: entry.key };
+                        ContractStorageKey { contract_address: *addr, key: entry.key };
                     let list = self.0.get::<tables::StorageChangeSet>(changeset_key.clone())?;
 
                     let updated_list = match list {
@@ -639,10 +783,10 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
                     };
 
                     self.0.put::<tables::StorageChangeSet>(changeset_key, updated_list)?;
-                    storage_cursor.upsert(addr, entry)?;
+                    storage_cursor.upsert(*addr, entry)?;
 
                     let storage_change_sharded_key =
-                        ContractStorageKey { contract_address: addr, key: entry.key };
+                        ContractStorageKey { contract_address: *addr, key: entry.key };
 
                     self.0.put::<tables::StorageChangeHistory>(
                         block_number,
@@ -657,15 +801,15 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
 
         // update contract info
 
-        for (addr, class_hash) in state_updates.deployed_contracts {
-            let value = if let Some(info) = self.0.get::<tables::ContractInfo>(addr)? {
-                GenericContractInfo { class_hash, ..info }
+        for (addr, class_hash) in &state_updates.deployed_contracts {
+            let value = if let Some(info) = self.0.get::<tables::ContractInfo>(*addr)? {
+                GenericContractInfo { class_hash: *class_hash, ..info }
             } else {
-                GenericContractInfo { class_hash, ..Default::default() }
+                GenericContractInfo { class_hash: *class_hash, ..Default::default() }
             };
 
             let new_change_set =
-                if let Some(mut change_set) = self.0.get::<tables::ContractInfoChangeSet>(addr)? {
+                if let Some(mut change_set) = self.0.get::<tables::ContractInfoChangeSet>(*addr)? {
                     change_set.class_change_list.insert(block_number);
                     change_set
                 } else {
@@ -675,22 +819,22 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
                     }
                 };
 
-            self.0.put::<tables::ContractInfo>(addr, value)?;
+            self.0.put::<tables::ContractInfo>(*addr, value)?;
 
-            let class_change_key = ContractClassChange::deployed(addr, class_hash);
+            let class_change_key = ContractClassChange::deployed(*addr, *class_hash);
             self.0.put::<tables::ClassChangeHistory>(block_number, class_change_key)?;
-            self.0.put::<tables::ContractInfoChangeSet>(addr, new_change_set)?;
+            self.0.put::<tables::ContractInfoChangeSet>(*addr, new_change_set)?;
         }
 
-        for (addr, new_class_hash) in state_updates.replaced_classes {
-            let info = if let Some(info) = self.0.get::<tables::ContractInfo>(addr)? {
-                GenericContractInfo { class_hash: new_class_hash, ..info }
+        for (addr, new_class_hash) in &state_updates.replaced_classes {
+            let info = if let Some(info) = self.0.get::<tables::ContractInfo>(*addr)? {
+                GenericContractInfo { class_hash: *new_class_hash, ..info }
             } else {
-                GenericContractInfo { class_hash: new_class_hash, ..Default::default() }
+                GenericContractInfo { class_hash: *new_class_hash, ..Default::default() }
             };
 
             let new_change_set =
-                if let Some(mut change_set) = self.0.get::<tables::ContractInfoChangeSet>(addr)? {
+                if let Some(mut change_set) = self.0.get::<tables::ContractInfoChangeSet>(*addr)? {
                     change_set.class_change_list.insert(block_number);
                     change_set
                 } else {
@@ -700,22 +844,22 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
                     }
                 };
 
-            self.0.put::<tables::ContractInfo>(addr, info)?;
+            self.0.put::<tables::ContractInfo>(*addr, info)?;
 
-            let class_change_key = ContractClassChange::replaced(addr, new_class_hash);
+            let class_change_key = ContractClassChange::replaced(*addr, *new_class_hash);
             self.0.put::<tables::ClassChangeHistory>(block_number, class_change_key)?;
-            self.0.put::<tables::ContractInfoChangeSet>(addr, new_change_set)?;
+            self.0.put::<tables::ContractInfoChangeSet>(*addr, new_change_set)?;
         }
 
-        for (addr, nonce) in state_updates.nonce_updates {
-            let value = if let Some(info) = self.0.get::<tables::ContractInfo>(addr)? {
-                GenericContractInfo { nonce, ..info }
+        for (addr, nonce) in &state_updates.nonce_updates {
+            let value = if let Some(info) = self.0.get::<tables::ContractInfo>(*addr)? {
+                GenericContractInfo { nonce: *nonce, ..info }
             } else {
-                GenericContractInfo { nonce, ..Default::default() }
+                GenericContractInfo { nonce: *nonce, ..Default::default() }
             };
 
             let new_change_set =
-                if let Some(mut change_set) = self.0.get::<tables::ContractInfoChangeSet>(addr)? {
+                if let Some(mut change_set) = self.0.get::<tables::ContractInfoChangeSet>(*addr)? {
                     change_set.nonce_change_list.insert(block_number);
                     change_set
                 } else {
@@ -725,13 +869,29 @@ impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
                     }
                 };
 
-            self.0.put::<tables::ContractInfo>(addr, value)?;
+            self.0.put::<tables::ContractInfo>(*addr, value)?;
 
-            let nonce_change_key = ContractNonceChange { contract_address: addr, nonce };
+            let nonce_change_key = ContractNonceChange { contract_address: *addr, nonce: *nonce };
             self.0.put::<tables::NonceChangeHistory>(block_number, nonce_change_key)?;
-            self.0.put::<tables::ContractInfoChangeSet>(addr, new_change_set)?;
+            self.0.put::<tables::ContractInfoChangeSet>(*addr, new_change_set)?;
         }
 
+        Ok(())
+    }
+}
+
+impl<Tx: DbTxMut> BlockWriter for DbProvider<Tx> {
+    fn insert_block_with_states_and_receipts(
+        &self,
+        block: SealedBlockWithStatus,
+        states: StateUpdatesWithClasses,
+        receipts: Vec<Receipt>,
+        executions: Vec<TypedTransactionExecutionInfo>,
+    ) -> ProviderResult<()> {
+        let block_number = block.block.header.number;
+        let state_updates = states.state_updates.clone();
+        self.insert_block_data(block, states, receipts, executions)?;
+        self.insert_state_history(block_number, &state_updates)?;
         Ok(())
     }
 }
@@ -768,8 +928,12 @@ pub const STATE_TRIE_HISTORY_RETENTION_KEY: u64 = 1;
 impl<Tx: DbTxMut> HistoricalStateRetentionProvider for DbProvider<Tx> {
     fn earliest_available_state_block(&self) -> ProviderResult<Option<BlockNumber>> {
         let key = STATE_HISTORY_RETENTION_KEY;
-        let result = self.0.get::<tables::StateHistoryRetention>(key)?;
-        Ok(result.map(|retention| retention.earliest_available_block))
+        if let Some(retention) = self.0.get::<tables::StateHistoryRetention>(key)? {
+            return Ok(Some(retention.earliest_available_block));
+        }
+        // No pruning entry — return block 0 if any blocks exist, None otherwise.
+        let has_blocks = self.0.cursor::<tables::BlockHashes>()?.last()?.is_some();
+        Ok(has_blocks.then_some(0))
     }
 
     fn set_earliest_available_state_block(&self, block_number: BlockNumber) -> ProviderResult<()> {
@@ -781,8 +945,12 @@ impl<Tx: DbTxMut> HistoricalStateRetentionProvider for DbProvider<Tx> {
 
     fn earliest_available_state_trie_block(&self) -> ProviderResult<Option<BlockNumber>> {
         let key = STATE_TRIE_HISTORY_RETENTION_KEY;
-        let result = self.0.get::<tables::StateHistoryRetention>(key)?;
-        Ok(result.map(|retention| retention.earliest_available_block))
+        if let Some(retention) = self.0.get::<tables::StateHistoryRetention>(key)? {
+            return Ok(Some(retention.earliest_available_block));
+        }
+        // No pruning entry — return block 0 if any blocks exist, None otherwise.
+        let has_blocks = self.0.cursor::<tables::BlockHashes>()?.last()?.is_some();
+        Ok(has_blocks.then_some(0))
     }
 
     fn set_earliest_available_state_trie_block(

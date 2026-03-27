@@ -54,7 +54,7 @@ use katana_rpc_server::dev::DevApi;
 use katana_rpc_server::paymaster::PaymasterProxy;
 #[cfg(feature = "cartridge")]
 use katana_rpc_server::starknet::CartridgePaymasterConfig;
-use katana_rpc_server::starknet::{StarknetApi, StarknetApiConfig};
+use katana_rpc_server::starknet::{RpcCache, StarknetApi, StarknetApiConfig};
 #[cfg(feature = "tee")]
 use katana_rpc_server::tee::TeeApi;
 use katana_rpc_server::{RpcServer, RpcServerHandle};
@@ -116,11 +116,18 @@ where
 
         // --- build executor factory
 
+        let is_l3 = match config.chain.as_ref() {
+            ChainSpec::Dev(_) => false,
+            ChainSpec::FullNode(_) => false,
+            ChainSpec::Rollup(cs) => matches!(cs.settlement, SettlementLayer::Starknet { .. }),
+        };
+
         // Create versioned constants overrides from config
         let overrides = Some(VersionedConstantsOverrides {
             invoke_tx_max_n_steps: Some(config.execution.invocation_max_steps),
             validate_max_n_steps: Some(config.execution.validation_max_steps),
             max_recursion_depth: Some(config.execution.max_recursion_depth),
+            is_l3,
         });
 
         let execution_flags = ExecutionFlags::new()
@@ -313,6 +320,7 @@ where
             gas_oracle.clone(),
             starknet_api_cfg,
             provider.clone(),
+            RpcCache::new(),
         );
 
         if config.rpc.apis.contains(&RpcModuleKind::Starknet) {

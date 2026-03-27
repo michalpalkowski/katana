@@ -4,12 +4,16 @@ use std::sync::Arc;
 
 use jsonrpsee::core::{async_trait, RpcResult};
 use katana_primitives::block::{BlockHashOrNumber, BlockNumber};
+use katana_primitives::receipt::Receipt;
+use katana_primitives::transaction::Tx;
 use katana_primitives::Felt;
 use katana_provider::api::block::{BlockHashProvider, BlockNumberProvider, HeaderProvider};
 use katana_provider::api::transaction::{ReceiptProvider, TransactionProvider};
 use katana_provider::ProviderFactory;
 use katana_rpc_api::error::tee::TeeApiError;
-use katana_rpc_api::tee::{EventProofResponse, TeeApiServer, TeeQuoteResponse};
+use katana_rpc_api::tee::{
+    EventProofResponse, TeeApiServer, TeeL1ToL2Message, TeeL2ToL1Message, TeeQuoteResponse,
+};
 use katana_tee::TeeProvider;
 use starknet_types_core::hash::{Poseidon, StarkHash};
 use tracing::{debug, info};
@@ -52,42 +56,6 @@ where
         );
         Self { provider_factory, tee_provider, fork_block_number, args_hash }
     }
-
-    /// Compute the 64-byte report data for attestation.
-    /// report_data layout:
-    ///   [0..32]  = Poseidon(state_root, block_hash, fork_block_number, events_commitment, fork_state_root)
-    ///   [32..64] = SHA-256 hash of security-critical runtime args
-    fn compute_report_data(
-        &self,
-        state_root: Felt,
-        block_hash: Felt,
-        events_commitment: Felt,
-        fork_state_root: Felt,
-    ) -> [u8; 64] {
-        let fb = Felt::from(self.fork_block_number.unwrap_or(0));
-        let commitment =
-            Poseidon::hash_array(&[state_root, block_hash, fb, events_commitment, fork_state_root]);
-
-        let commitment_bytes = commitment.to_bytes_be();
-
-        let mut report_data = [0u8; 64];
-        report_data[..32].copy_from_slice(&commitment_bytes);
-        report_data[32..64].copy_from_slice(&self.args_hash);
-
-        debug!(
-            target: "rpc::tee",
-            %state_root,
-            %block_hash,
-            fork_block_number = ?self.fork_block_number,
-            %events_commitment,
-            %fork_state_root,
-            %commitment,
-            args_hash = %hex::encode(self.args_hash),
-            "Computed report data for attestation"
-        );
-
-        report_data
-    }
 }
 
 #[async_trait]
@@ -104,112 +72,231 @@ where
 {
     async fn generate_quote(
         &self,
-        prev_block_id: Option<BlockNumber>,
-        block_id: BlockNumber,
+        prev_block: Option<BlockNumber>,
+        block: BlockNumber,
     ) -> RpcResult<TeeQuoteResponse> {
         debug!(
             target: "rpc::tee",
-            ?prev_block_id,
-            block_id,
+            ?prev_block,
+            block,
             "Generating TEE attestation quote"
         );
 
-        // Get blockchain state for the requested block(s)
         let provider = self.provider_factory.provider();
 
-        let (prev_block_number, prev_block_hash, prev_state_root) = match prev_block_id {
-            Some(prev_num) => {
-                let prev_hash = provider
-                    .block_hash_by_num(prev_num)
+        // Get prev block info
+        let (prev_block_id, prev_block_hash, prev_state_root) = match prev_block {
+            None => (Felt::MAX, Felt::ZERO, Felt::ZERO),
+
+            Some(num) => {
+                let hash = provider
+                    .block_hash_by_num(num)
                     .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
                     .ok_or_else(|| {
-                        TeeApiError::ProviderError(format!(
-                            "Block hash not found for block {prev_num}"
-                        ))
+                        TeeApiError::ProviderError(format!("Block hash not found for block {num}"))
                     })?;
-                let prev_header = provider
-                    .header_by_number(prev_num)
+
+                let header = provider
+                    .header_by_number(num)
                     .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
                     .ok_or_else(|| {
-                        TeeApiError::ProviderError(format!("Header not found for block {prev_num}"))
+                        TeeApiError::ProviderError(format!("Header not found for block {num}"))
                     })?;
-                (prev_num, prev_hash, prev_header.state_root)
+
+                (Felt::from(num), hash, header.state_root)
             }
-            None => (u64::MAX, Felt::ZERO, Felt::ZERO),
         };
 
         let block_hash = provider
-            .block_hash_by_num(block_id)
+            .block_hash_by_num(block)
             .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
-            .ok_or_else(|| {
-                TeeApiError::ProviderError(format!("Block hash not found for block {block_id}"))
-            })?;
+            .unwrap();
 
-        // Get the header to retrieve state_root
         let header = provider
-            .header_by_number(block_id)
+            .header_by_number(block)
             .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
             .ok_or_else(|| {
-                TeeApiError::ProviderError(format!("Header not found for block {block_id}"))
+                TeeApiError::ProviderError(format!("Header not found for block {block}"))
             })?;
 
         let state_root = header.state_root;
         let events_commitment = header.events_commitment;
 
-        // In fork mode, include the fork block's state root so SP1 can verify
-        // initial storage proofs against the TEE-attested fork state.
-        let fork_state_root = match self.fork_block_number {
-            Some(fork_num) => {
+        if let Some(fork_block) = self.fork_block_number {
+            // Resolve fork block's state root for SP1 verification
+            let fork_state_root = {
                 let fork_header = provider
-                    .header_by_number(fork_num)
+                    .header_by_number(fork_block)
                     .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
                     .ok_or_else(|| {
                         TeeApiError::ProviderError(format!(
-                            "Header not found for fork block {fork_num}"
+                            "Header not found for fork block {fork_block}"
                         ))
                     })?;
-                if fork_header.state_root == Felt::ZERO {
-                    return Err(TeeApiError::ProviderError(format!(
-                        "Fork block {fork_num} has zero state root — trie not yet committed?"
-                    ))
-                    .into());
-                }
                 fork_header.state_root
+            };
+
+            let report_data = compute_report_data_sharding(
+                prev_state_root,
+                state_root,
+                prev_block_hash,
+                block_hash,
+                prev_block_id,
+                block.into(),
+                fork_block.into(),
+                events_commitment,
+                &self.args_hash,
+            );
+
+            let quote = self
+                .tee_provider
+                .generate_quote(&report_data)
+                .map_err(|e| TeeApiError::QuoteGenerationFailed(e.to_string()))?;
+
+            info!(
+                target: "rpc::tee",
+                ?prev_block_id,
+                block_number = block,
+                %prev_block_hash,
+                %block_hash,
+                quote_size = quote.len(),
+                args_hash = %hex::encode(self.args_hash),
+                "Generated TEE attestation quote (sharding)"
+            );
+
+            Ok(TeeQuoteResponse {
+                quote: format!("0x{}", hex::encode(&quote)),
+                prev_state_root,
+                state_root,
+                prev_block_hash,
+                block_hash,
+                prev_block_number: prev_block,
+                block_number: block,
+                fork_block_number: self.fork_block_number,
+                events_commitment,
+                fork_state_root,
+                l1_to_l2_messages: Vec::new(),
+                l2_to_l1_messages: Vec::new(),
+                messages_commitment: Felt::ZERO,
+            })
+        } else {
+            // Gather all L1<->L2 messages from prev_block+1 to block_id (inclusive)
+            let start_block = prev_block.map(|n| n + 1).unwrap_or(0);
+
+            let mut l2_to_l1_messages: Vec<TeeL2ToL1Message> = Vec::new();
+            let mut l1_to_l2_messages: Vec<TeeL1ToL2Message> = Vec::new();
+
+            let mut l2_to_l1_msg_hashes: Vec<Felt> = Vec::new();
+            let mut l1_to_l2_msg_hashes: Vec<Felt> = Vec::new();
+
+            for block_num in start_block..=block {
+                let block_id_or_num = BlockHashOrNumber::Num(block_num);
+
+                let receipts = provider
+                    .receipts_by_block(block_id_or_num)
+                    .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
+                    .unwrap_or_default();
+
+                let txs = provider
+                    .transactions_by_block(block_id_or_num)
+                    .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
+                    .unwrap_or_default();
+
+                for receipt in &receipts {
+                    // L2->L1: each message in messages_sent
+                    for msg in receipt.messages_sent() {
+                        let len = Felt::from(msg.payload.len());
+                        let payload_hash = Poseidon::hash_array(
+                            &std::iter::once(len)
+                                .chain(msg.payload.iter().copied())
+                                .collect::<Vec<_>>(),
+                        );
+                        let msg_hash = Poseidon::hash_array(&[
+                            msg.from_address.into(),
+                            msg.to_address,
+                            payload_hash,
+                        ]);
+                        l2_to_l1_msg_hashes.push(msg_hash);
+                        l2_to_l1_messages.push(TeeL2ToL1Message {
+                            from_address: msg.from_address.into(),
+                            to_address: msg.to_address,
+                            payload: msg.payload.clone(),
+                        });
+                    }
+
+                    // L1->L2: message_hash from L1Handler receipt; full fields from the tx
+                    if let Receipt::L1Handler(l1h) = receipt {
+                        let felt = Felt::from_bytes_be_slice(&l1h.message_hash.0);
+                        l1_to_l2_msg_hashes.push(felt);
+                    }
+                }
+
+                // Collect full L1→L2 message fields from L1Handler transactions
+                for tx in &txs {
+                    if let Tx::L1Handler(l1h) = &tx.transaction {
+                        // calldata[0] is always the Ethereum sender address as a Felt
+                        let from_address = l1h.calldata.first().copied().unwrap_or(Felt::ZERO);
+                        let payload = l1h.calldata.get(1..).unwrap_or_default().to_vec();
+                        l1_to_l2_messages.push(TeeL1ToL2Message {
+                            from_address,
+                            to_address: l1h.contract_address.into(),
+                            selector: l1h.entry_point_selector,
+                            payload,
+                            nonce: l1h.nonce,
+                        });
+                    }
+                }
             }
-            None => Felt::ZERO,
-        };
 
-        let report_data =
-            self.compute_report_data(state_root, block_hash, events_commitment, fork_state_root);
+            // Combine both directions into a single messages commitment
+            let l2_to_l1_commitment = Poseidon::hash_array(&l2_to_l1_msg_hashes);
+            let l1_to_l2_commitment = Poseidon::hash_array(&l1_to_l2_msg_hashes);
+            let messages_commitment =
+                Poseidon::hash_array(&[l2_to_l1_commitment, l1_to_l2_commitment]);
 
-        // Generate the attestation quote
-        let quote = self
-            .tee_provider
-            .generate_quote(&report_data)
-            .map_err(|e| TeeApiError::QuoteGenerationFailed(e.to_string()))?;
+            let report_data = compute_report_data_appchain(
+                prev_state_root,
+                state_root,
+                prev_block_hash,
+                block_hash,
+                prev_block_id,
+                block.into(),
+                messages_commitment,
+            );
 
-        info!(
-            target: "rpc::tee",
-            prev_block_number,
-            block_number = block_id,
-            %prev_block_hash,
-            %block_hash,
-            quote_size = quote.len(),
-            "Generated TEE attestation quote"
-        );
+            let quote = self
+                .tee_provider
+                .generate_quote(&report_data)
+                .map_err(|e| TeeApiError::QuoteGenerationFailed(e.to_string()))?;
 
-        Ok(TeeQuoteResponse {
-            quote: format!("0x{}", hex::encode(&quote)),
-            prev_state_root,
-            state_root,
-            prev_block_hash,
-            block_hash,
-            prev_block_number,
-            block_number: block_id,
-            fork_block_number: self.fork_block_number,
-            events_commitment,
-            fork_state_root,
-        })
+            info!(
+                target: "rpc::tee",
+                ?prev_block_id,
+                block_number = block,
+                %prev_block_hash,
+                %block_hash,
+                quote_size = quote.len(),
+                l2_to_l1_count = l2_to_l1_messages.len(),
+                l1_to_l2_count = l1_to_l2_messages.len(),
+                "Generated TEE attestation quote"
+            );
+
+            Ok(TeeQuoteResponse {
+                quote: format!("0x{}", hex::encode(&quote)),
+                prev_state_root,
+                state_root,
+                prev_block_hash,
+                block_hash,
+                prev_block_number: prev_block,
+                block_number: block,
+                fork_block_number: self.fork_block_number,
+                events_commitment,
+                fork_state_root: Felt::ZERO,
+                l1_to_l2_messages,
+                l2_to_l1_messages,
+                messages_commitment,
+            })
+        }
     }
 
     async fn get_event_proof(
@@ -224,7 +311,7 @@ where
 
         // Get block header for events_commitment
         let header = provider
-            .header_by_number(block_number)
+            .header_by_number(block_id)
             .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
             .ok_or_else(|| {
                 TeeApiError::EventProofError(format!("Block {block_number} not found"))
@@ -317,4 +404,111 @@ where
             data: event.data.clone(),
         })
     }
+}
+
+/// Compute the 64-byte report data for attestation.
+///
+/// ```text
+/// Poseidon(
+///     prev_state_root,
+///     state_root,
+///     prev_block_hash,
+///     block_hash,
+///     prev_block_number,
+///     block_number,
+///     fork_block_number,
+///     events_commitment,
+/// )
+/// report_data = commitment_bytes_be ++ [0u8; 32]   // 64 bytes total
+/// ```
+#[allow(clippy::too_many_arguments)]
+fn compute_report_data_sharding(
+    prev_state_root: Felt,
+    state_root: Felt,
+    prev_block_hash: Felt,
+    block_hash: Felt,
+    prev_block_number: Felt,
+    block_number: Felt,
+    fork_block_number: Felt,
+    events_commitment: Felt,
+    args_hash: &[u8; 32],
+) -> [u8; 64] {
+    let commitment = Poseidon::hash_array(&[
+        prev_state_root,
+        state_root,
+        prev_block_hash,
+        block_hash,
+        prev_block_number,
+        block_number,
+        fork_block_number,
+        events_commitment,
+    ]);
+
+    let commitment_bytes = commitment.to_bytes_be();
+
+    let mut report_data = [0u8; 64];
+    report_data[..32].copy_from_slice(&commitment_bytes);
+    report_data[32..64].copy_from_slice(args_hash);
+
+    debug!(
+        target: "rpc::tee",
+        %state_root,
+        %block_hash,
+        ?fork_block_number,
+        %events_commitment,
+        %commitment,
+        args_hash = %hex::encode(args_hash),
+        "Computed report data for sharding attestation"
+    );
+
+    report_data
+}
+
+/// Compute the 64-byte report data for attestation.
+///
+/// ```text
+/// Poseidon(
+///     prev_state_root,
+///     state_root,
+///     prev_block_hash,
+///     block_hash,
+///     prev_block_number,
+///     block_number,
+///     messages_commitment
+/// )
+/// report_data = commitment_bytes_be ++ [0u8; 32]   // 64 bytes total
+/// ```
+fn compute_report_data_appchain(
+    prev_state_root: Felt,
+    state_root: Felt,
+    prev_block_hash: Felt,
+    block_hash: Felt,
+    prev_block_number: Felt,
+    block_number: Felt,
+    messages_commitment: Felt,
+) -> [u8; 64] {
+    let commitment = Poseidon::hash_array(&[
+        prev_state_root,
+        state_root,
+        prev_block_hash,
+        block_hash,
+        prev_block_number,
+        block_number,
+        messages_commitment,
+    ]);
+
+    let commitment_bytes = commitment.to_bytes_be();
+
+    let mut report_data = [0u8; 64];
+    report_data[..32].copy_from_slice(&commitment_bytes);
+
+    debug!(
+        target: "rpc::tee",
+        %state_root,
+        %block_hash,
+        %commitment,
+        "Computed report data for attestation"
+    );
+
+    report_data
 }
