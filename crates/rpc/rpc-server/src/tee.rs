@@ -145,6 +145,7 @@ where
                 block.into(),
                 fork_block.into(),
                 events_commitment,
+                fork_state_root,
                 &self.args_hash,
             );
 
@@ -431,6 +432,7 @@ fn compute_report_data_sharding(
     block_number: Felt,
     fork_block_number: Felt,
     events_commitment: Felt,
+    fork_state_root: Felt,
     args_hash: &[u8; 32],
 ) -> [u8; 64] {
     let commitment = Poseidon::hash_array(&[
@@ -442,6 +444,7 @@ fn compute_report_data_sharding(
         block_number,
         fork_block_number,
         events_commitment,
+        fork_state_root,
     ]);
 
     let commitment_bytes = commitment.to_bytes_be();
