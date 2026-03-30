@@ -3,6 +3,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Instant;
 
 use katana_chain_spec::ChainSpec;
 use katana_core::utils::get_current_timestamp;
@@ -54,6 +55,7 @@ use katana_rpc_types::{
 };
 use katana_rpc_types_builder::{BlockBuilder, ReceiptBuilder};
 use katana_tasks::{Result as TaskResult, TaskSpawner};
+use tracing::{info, warn};
 
 use crate::permit::Permits;
 use crate::utils::events::{Cursor, EventBlockId};
@@ -247,20 +249,46 @@ where
         block_id: BlockIdOrTag,
         flags: katana_executor::ExecutionFlags,
     ) -> StarknetApiResult<Vec<FeeEstimate>> {
+        let total_txs = transactions.len();
+        let started_at = Instant::now();
+
         // get the state and block env at the specified block for execution
         let state = self.state(&block_id)?;
         let env = self.block_env_at(&block_id)?;
         let versioned_constant_overrides = self.inner.config.versioned_constant_overrides.as_ref();
 
         // do estimations
-        blockifier::estimate_fees(
+        let result = blockifier::estimate_fees(
             self.inner.chain_spec.as_ref(),
             state,
             env,
             versioned_constant_overrides,
             transactions,
             flags,
-        )
+        );
+
+        match &result {
+            Ok(estimates) => {
+                info!(
+                    target: "rpc",
+                    total_txs,
+                    estimate_count = estimates.len(),
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    "estimate_fee_with completed"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    target: "rpc",
+                    total_txs,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    error = %err,
+                    "estimate_fee_with failed"
+                );
+            }
+        }
+
+        result
     }
 
     pub fn state(&self, block_id: &BlockIdOrTag) -> StarknetApiResult<Box<dyn StateProvider>> {

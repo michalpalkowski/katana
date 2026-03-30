@@ -1,5 +1,6 @@
 #[cfg(feature = "cartridge")]
 use std::sync::Arc;
+use std::time::Instant;
 
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::types::ErrorObjectOwned;
@@ -29,6 +30,7 @@ use katana_rpc_types::{
     BroadcastedTxWithChainId, CallResponse, CasmClass, Class, EstimateFeeSimulationFlag,
     FeeEstimate, FunctionCall, TxStatus,
 };
+use tracing::{info, warn};
 
 use super::StarknetApi;
 #[cfg(feature = "cartridge")]
@@ -256,12 +258,48 @@ where
                 StarknetApiError::unexpected(format!("Failed to acquire permit: {e}"))
             })?;
 
-        self.on_cpu_blocking_task(move |this| async move {
-            let _permit = permit;
-            let results = this.estimate_fee_with(transactions, block_id, flags)?;
-            Ok(results)
-        })
-        .await?
+        let total_txs = transactions.len();
+        let started_at = Instant::now();
+
+        let result = self
+            .on_cpu_blocking_task(move |this| async move {
+                let _permit = permit;
+                let results = this.estimate_fee_with(transactions, block_id, flags)?;
+                Ok(results)
+            })
+            .await;
+
+        match result {
+            Ok(Ok(results)) => {
+                info!(
+                    target: "rpc",
+                    total_txs,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    "starknet_estimateFee completed"
+                );
+                Ok(results)
+            }
+            Ok(Err(err)) => {
+                warn!(
+                    target: "rpc",
+                    total_txs,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    error = %err,
+                    "starknet_estimateFee failed"
+                );
+                Err(err)
+            }
+            Err(err) => {
+                warn!(
+                    target: "rpc",
+                    total_txs,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    error = %err,
+                    "starknet_estimateFee task failed"
+                );
+                Err(err.into())
+            }
+        }
     }
 
     async fn estimate_message_fee(

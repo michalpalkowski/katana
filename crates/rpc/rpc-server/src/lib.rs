@@ -48,7 +48,7 @@ pub const DEFAULT_MAX_REQUEST_BODY_SIZE: u32 = TEN_MB_SIZE_BYTES;
 /// The default maximum size in bytes for an RPC response body.
 pub const DEFAULT_MAX_RESPONSE_BODY_SIZE: u32 = TEN_MB_SIZE_BYTES;
 /// The default timeout for an RPC request.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

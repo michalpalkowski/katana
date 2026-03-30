@@ -135,8 +135,7 @@ where
                     .map_err(|e| KatanaApiError::InternalError(e.to_string()))?
                     .ok_or(KatanaApiError::BlockNotFound)?;
 
-                if let Some(contract_updates) =
-                    state_updates.storage_updates.get(&contract_address)
+                if let Some(contract_updates) = state_updates.storage_updates.get(&contract_address)
                 {
                     for (key, value) in contract_updates {
                         accumulated.insert(*key, *value);
