@@ -1,0 +1,39 @@
+# Protocol Schema — Report Data Commitment
+#
+# Copied from sharding_operator/protocol/schema.toml [report_data_commitment] section.
+# This file is the Katana-side truth for the Poseidon hash schema.
+#
+# If this golden vector fails, it means compute_report_data_sharding() in tee.rs
+# has drifted from the operator and Cairo contracts.
+#
+# DO NOT modify without also updating:
+#   1. sharding_operator/protocol/schema.toml
+#   2. katana-tee/contracts/katana_tee/tests/test_verify_katana_report_data.cairo
+
+[report_data_commitment]
+description = "TEE report_data[0..32] = Poseidon(elements)"
+elements = [
+    "prev_state_root",
+    "state_root",
+    "prev_block_hash",
+    "block_hash",
+    "prev_block_number",
+    "block_number",
+    "fork_block_number",
+    "events_commitment",
+    "fork_state_root",
+]
+
+[report_data_commitment.golden_vector]
+inputs = [
+    { name = "prev_state_root",  value = "0xA0" },
+    { name = "state_root",       value = "0x111" },
+    { name = "prev_block_hash",  value = "0xB0" },
+    { name = "block_hash",       value = "0x222" },
+    { name = "prev_block_number", value = "99" },
+    { name = "block_number",     value = "100" },
+    { name = "fork_block_number", value = "42" },
+    { name = "events_commitment", value = "0x333" },
+    { name = "fork_state_root",  value = "0x444" },
+]
+expected_hash = "0x00ce9048450cfe38b4daae537d51a44205fc2db09513d9f038b3f1078a8c050c"

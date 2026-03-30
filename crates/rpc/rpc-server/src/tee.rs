@@ -515,3 +515,52 @@ fn compute_report_data_appchain(
 
     report_data
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Golden vector test — must match:
+    ///   - sharding_operator/protocol/schema.toml [report_data_commitment.golden_vector]
+    ///   - sharding_operator/build.rs compile-time check
+    ///   - katana-tee/contracts/katana_tee/tests/test_verify_katana_report_data.cairo
+    ///
+    /// If this test fails, compute_report_data_sharding() has drifted from the
+    /// operator and Cairo contracts.
+    #[test]
+    fn report_data_schema_golden_vector() {
+        let report_data = compute_report_data_sharding(
+            Felt::from(0xA0u64),  // prev_state_root
+            Felt::from(0x111u64), // state_root
+            Felt::from(0xB0u64),  // prev_block_hash
+            Felt::from(0x222u64), // block_hash
+            Felt::from(99u64),    // prev_block_number
+            Felt::from(100u64),   // block_number
+            Felt::from(42u64),    // fork_block_number
+            Felt::from(0x333u64), // events_commitment
+            Felt::from(0x444u64), // fork_state_root
+            &[0u8; 32],          // args_hash (doesn't affect report_data[0..32])
+        );
+
+        let commitment_bytes = &report_data[..32];
+        let commitment = Felt::from_bytes_be_slice(commitment_bytes);
+
+        let expected = Felt::from_hex(
+            "0x00ce9048450cfe38b4daae537d51a44205fc2db09513d9f038b3f1078a8c050c",
+        )
+        .expect("invalid golden hash hex");
+
+        assert_eq!(
+            commitment, expected,
+            "Poseidon schema drift detected!\n\
+             compute_report_data_sharding() produces {commitment:#x}\n\
+             but protocol/schema.toml expects {expected:#x}\n\
+             \n\
+             Synchronize ALL consumers:\n\
+             1. sharding_operator/protocol/schema.toml\n\
+             2. sharding_operator/build.rs\n\
+             3. katana-tee katana_report_utils.cairo\n\
+             4. This file (tee.rs)"
+        );
+    }
+}
