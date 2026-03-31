@@ -305,6 +305,7 @@ SHUTTING_DOWN=0
 KATANA_EXIT_CODE="never"
 CONTROL_PORT_NAME="org.katana.control.0"
 CONTROL_PORT_LINK="/dev/virtio-ports/org.katana.control.0"
+CONTROL_PROTOCOL_VERSION="1"
 
 fatal_boot() {
     log "ERROR: $*"
@@ -435,6 +436,14 @@ handle_control_command() {
     fi
 
     case "$CMD" in
+        protocol)
+            respond_control "ok protocol version=$CONTROL_PROTOCOL_VERSION"
+            ;;
+
+        ping)
+            respond_control "pong"
+            ;;
+
         start)
             refresh_katana_state
             if [ -n "$KATANA_PID" ] && kill -0 "$KATANA_PID" 2>/dev/null; then
@@ -484,7 +493,7 @@ handle_control_command() {
             ;;
 
         *)
-            respond_control "err unknown-command"
+            respond_control "err unknown-command $CMD"
             ;;
     esac
 }
@@ -611,6 +620,7 @@ while [ -z "$CONTROL_PORT" ]; do
     [ -n "$CONTROL_PORT" ] || sleep 1
 done
 log "Control channel ready: $CONTROL_PORT"
+log "Control protocol version: $CONTROL_PROTOCOL_VERSION"
 
 while true; do
     refresh_katana_state
