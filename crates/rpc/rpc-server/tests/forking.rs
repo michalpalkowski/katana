@@ -663,6 +663,27 @@ async fn get_events_with_invalid_block_hash(#[case] hash: BlockHash) {
     assert_provider_starknet_err!(result, StarknetApiError::BlockNotFound);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_prefork_number_to_postfork_hash_succeeds() {
+    let (_sequencer, provider, local_only_data) = setup_test().await;
+    let latest_local_hash = local_only_data
+        .last()
+        .map(|(block, _tx)| block.1)
+        .expect("local test should create post-fork blocks");
+
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER - 1)),
+        to_block: Some(BlockIdOrTag::Hash(latest_local_hash)),
+    };
+
+    let result =
+        provider.get_events(filter, None, 100).await.expect("cross-fork get_events should succeed");
+
+    assert!(!result.events.is_empty(), "expected non-empty events for cross-fork range");
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};

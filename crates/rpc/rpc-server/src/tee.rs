@@ -539,16 +539,15 @@ mod tests {
             Felt::from(42u64),    // fork_block_number
             Felt::from(0x333u64), // events_commitment
             Felt::from(0x444u64), // fork_state_root
-            &[0u8; 32],          // args_hash (doesn't affect report_data[0..32])
+            &[0u8; 32],           // args_hash (doesn't affect report_data[0..32])
         );
 
         let commitment_bytes = &report_data[..32];
         let commitment = Felt::from_bytes_be_slice(commitment_bytes);
 
-        let expected = Felt::from_hex(
-            "0x00ce9048450cfe38b4daae537d51a44205fc2db09513d9f038b3f1078a8c050c",
-        )
-        .expect("invalid golden hash hex");
+        let expected =
+            Felt::from_hex("0x00ce9048450cfe38b4daae537d51a44205fc2db09513d9f038b3f1078a8c050c")
+                .expect("invalid golden hash hex");
 
         assert_eq!(
             commitment, expected,

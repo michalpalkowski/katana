@@ -18,7 +18,9 @@ use katana_primitives::event::MaybeForkedContinuationToken;
 use katana_primitives::execution::TypedTransactionExecutionInfo;
 use katana_primitives::transaction::{ExecutableTx, ExecutableTxWithHash, TxHash, TxNumber};
 use katana_primitives::Felt;
-use katana_provider::api::block::{BlockHashProvider, BlockIdReader, BlockNumberProvider};
+use katana_provider::api::block::{
+    BlockHashProvider, BlockIdReader, BlockNumberProvider, BlockProvider,
+};
 use katana_provider::api::contract::ContractClassProvider;
 use katana_provider::api::env::BlockEnvProvider;
 use katana_provider::api::state::{StateFactoryProvider, StateProvider, StateRootProvider};
@@ -1097,10 +1099,12 @@ where
                 EventBlockId::Num(num.ok_or(StarknetApiError::BlockNotFound)?)
             }
 
-            BlockIdOrTag::Hash(..) => {
+            BlockIdOrTag::Hash(hash) => {
                 // Check first if the block hash belongs to a local block.
                 if let Some(num) = provider.convert_block_id(id)? {
                     EventBlockId::Num(num)
+                } else if let Some(block) = provider.block(BlockHashOrNumber::Hash(hash))? {
+                    EventBlockId::Num(block.header.number)
                 } else {
                     return Err(StarknetApiError::BlockNotFound);
                 }
