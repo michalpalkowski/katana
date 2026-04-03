@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use katana_db::abstraction::Database;
 use katana_fork::Backend;
 use katana_primitives::block::BlockNumber;
+use katana_provider_api::event::UpstreamEventProxy;
 pub use katana_provider_api::{ProviderError, ProviderResult};
 use katana_starknet::rpc::Client as StarknetClient;
 
@@ -91,7 +92,8 @@ use crate::providers::db::DbProvider;
 use crate::providers::fork::{ForkedDb, ForkedProvider};
 
 #[auto_impl::auto_impl(&, Box, Arc)]
-pub trait ProviderFactory: Send + Sync + Debug + 'static {
+pub trait ProviderFactory: Send + Sync + Debug + UpstreamEventProxy + 'static
+{
     type Provider;
     type ProviderMut: MutableProvider;
 
@@ -125,6 +127,8 @@ impl DbProviderFactory {
         &self.db
     }
 }
+
+impl UpstreamEventProxy for DbProviderFactory {}
 
 impl ProviderFactory for DbProviderFactory {
     type Provider = DbProvider<<katana_db::Db as Database>::Tx>;
@@ -169,6 +173,23 @@ impl ForkProviderFactory {
     /// Returns the block number the provider is forked at.
     pub fn block(&self) -> BlockNumber {
         self.block_id
+    }
+}
+
+impl UpstreamEventProxy for ForkProviderFactory {
+    fn fork_block(&self) -> Option<BlockNumber> {
+        Some(self.block_id)
+    }
+
+    fn upstream_events(
+        &self,
+        filter: katana_rpc_types::event::EventFilter,
+        continuation_token: Option<String>,
+        chunk_size: u64,
+    ) -> katana_provider_api::ProviderResult<katana_rpc_types::event::GetEventsResponse> {
+        self.backend
+            .get_events(filter, continuation_token, chunk_size)
+            .map_err(|e| katana_provider_api::ProviderError::Other(e.to_string()))
     }
 }
 

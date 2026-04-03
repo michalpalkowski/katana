@@ -31,6 +31,9 @@ where
     /// The block number Katana forked from (if running in fork mode).
     /// Included in report_data so SP1 can prove fork freshness.
     fork_block_number: Option<u64>,
+    /// Hash of security-critical runtime args, attested in report_data[32..64].
+    /// In stable forked mode this includes `fork.block`.
+    args_hash: [u8; 32],
 }
 
 impl<PF> TeeApi<PF>
@@ -42,14 +45,16 @@ where
         provider_factory: PF,
         tee_provider: Arc<dyn TeeProvider>,
         fork_block_number: Option<u64>,
+        args_hash: [u8; 32],
     ) -> Self {
         info!(
             target: "rpc::tee",
             provider_type = tee_provider.provider_type(),
             ?fork_block_number,
+            args_hash = %hex::encode(args_hash),
             "TEE API initialized"
         );
-        Self { provider_factory, tee_provider, fork_block_number }
+        Self { provider_factory, tee_provider, fork_block_number, args_hash }
     }
 }
 
@@ -118,6 +123,19 @@ where
         let events_commitment = header.events_commitment;
 
         if let Some(fork_block) = self.fork_block_number {
+            // Resolve fork block's state root for SP1 verification
+            let fork_state_root = {
+                let fork_header = provider
+                    .header_by_number(fork_block)
+                    .map_err(|e| TeeApiError::ProviderError(e.to_string()))?
+                    .ok_or_else(|| {
+                        TeeApiError::ProviderError(format!(
+                            "Header not found for fork block {fork_block}"
+                        ))
+                    })?;
+                fork_header.state_root
+            };
+
             let report_data = compute_report_data_sharding(
                 prev_state_root,
                 state_root,
@@ -127,6 +145,8 @@ where
                 block.into(),
                 fork_block.into(),
                 events_commitment,
+                fork_state_root,
+                &self.args_hash,
             );
 
             let quote = self
@@ -141,7 +161,8 @@ where
                 %prev_block_hash,
                 %block_hash,
                 quote_size = quote.len(),
-                "Generated TEE attestation quote"
+                args_hash = %hex::encode(self.args_hash),
+                "Generated TEE attestation quote (sharding)"
             );
 
             Ok(TeeQuoteResponse {
@@ -154,6 +175,7 @@ where
                 block_number: block,
                 fork_block_number: self.fork_block_number,
                 events_commitment,
+                fork_state_root,
                 l1_to_l2_messages: Vec::new(),
                 l2_to_l1_messages: Vec::new(),
                 messages_commitment: Felt::ZERO,
@@ -270,6 +292,7 @@ where
                 block_number: block,
                 fork_block_number: self.fork_block_number,
                 events_commitment,
+                fork_state_root: Felt::ZERO,
                 l1_to_l2_messages,
                 l2_to_l1_messages,
                 messages_commitment,
@@ -409,8 +432,9 @@ fn compute_report_data_sharding(
     block_number: Felt,
     fork_block_number: Felt,
     events_commitment: Felt,
+    fork_state_root: Felt,
+    args_hash: &[u8; 32],
 ) -> [u8; 64] {
-    // Compute Poseidon hash of state_root and block_hash
     let commitment = Poseidon::hash_array(&[
         prev_state_root,
         state_root,
@@ -420,15 +444,14 @@ fn compute_report_data_sharding(
         block_number,
         fork_block_number,
         events_commitment,
+        fork_state_root,
     ]);
 
-    // Convert Felt to bytes (32 bytes) and pad to 64 bytes
     let commitment_bytes = commitment.to_bytes_be();
 
     let mut report_data = [0u8; 64];
-    // Place the 32-byte hash in the first half
     report_data[..32].copy_from_slice(&commitment_bytes);
-    // Second half remains zeros
+    report_data[32..64].copy_from_slice(args_hash);
 
     debug!(
         target: "rpc::tee",
@@ -437,7 +460,8 @@ fn compute_report_data_sharding(
         ?fork_block_number,
         %events_commitment,
         %commitment,
-        "Computed report data for attestation"
+        args_hash = %hex::encode(args_hash),
+        "Computed report data for sharding attestation"
     );
 
     report_data
@@ -490,4 +514,52 @@ fn compute_report_data_appchain(
     );
 
     report_data
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Golden vector test — must match:
+    ///   - sharding_operator/protocol/schema.toml [report_data_commitment.golden_vector]
+    ///   - sharding_operator/build.rs compile-time check
+    ///   - katana-tee/contracts/katana_tee/tests/test_verify_katana_report_data.cairo
+    ///
+    /// If this test fails, compute_report_data_sharding() has drifted from the
+    /// operator and Cairo contracts.
+    #[test]
+    fn report_data_schema_golden_vector() {
+        let report_data = compute_report_data_sharding(
+            Felt::from(0xA0u64),  // prev_state_root
+            Felt::from(0x111u64), // state_root
+            Felt::from(0xB0u64),  // prev_block_hash
+            Felt::from(0x222u64), // block_hash
+            Felt::from(99u64),    // prev_block_number
+            Felt::from(100u64),   // block_number
+            Felt::from(42u64),    // fork_block_number
+            Felt::from(0x333u64), // events_commitment
+            Felt::from(0x444u64), // fork_state_root
+            &[0u8; 32],           // args_hash (doesn't affect report_data[0..32])
+        );
+
+        let commitment_bytes = &report_data[..32];
+        let commitment = Felt::from_bytes_be_slice(commitment_bytes);
+
+        let expected =
+            Felt::from_hex("0x00ce9048450cfe38b4daae537d51a44205fc2db09513d9f038b3f1078a8c050c")
+                .expect("invalid golden hash hex");
+
+        assert_eq!(
+            commitment, expected,
+            "Poseidon schema drift detected!\n\
+             compute_report_data_sharding() produces {commitment:#x}\n\
+             but protocol/schema.toml expects {expected:#x}\n\
+             \n\
+             Synchronize ALL consumers:\n\
+             1. sharding_operator/protocol/schema.toml\n\
+             2. sharding_operator/build.rs\n\
+             3. katana-tee katana_report_utils.cairo\n\
+             4. This file (tee.rs)"
+        );
+    }
 }

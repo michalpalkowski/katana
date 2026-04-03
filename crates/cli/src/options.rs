@@ -1117,6 +1117,16 @@ pub struct TeeOptions {
     #[arg(long = "tee.provider", value_name = "PROVIDER")]
     #[serde(default)]
     pub tee_provider: Option<katana_tee::TeeProviderType>,
+
+    /// Canonical SHA-256 hash of security-critical runtime args.
+    ///
+    /// This must be provided by the measured init/runtime environment
+    /// (for example the hypervisor guest init script). Katana consumes
+    /// this value directly instead of recomputing it locally. In the stable
+    /// forked TEE flow this includes `--fork.block`.
+    #[arg(long = "tee.args-hash", value_name = "HEX32", requires = "tee_provider")]
+    #[serde(default)]
+    pub args_hash: Option<String>,
 }
 
 #[cfg(feature = "tee")]
@@ -1125,6 +1135,9 @@ impl TeeOptions {
         if let Some(other) = other {
             if self.tee_provider.is_none() {
                 self.tee_provider = other.tee_provider;
+            }
+            if self.args_hash.is_none() {
+                self.args_hash = other.args_hash.clone();
             }
         }
     }

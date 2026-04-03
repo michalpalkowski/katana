@@ -58,8 +58,19 @@ usage() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOT_DIR="${SCRIPT_DIR}/output/qemu"
+KATANA_ARGS_HASH_HEX="${KATANA_ARGS_HASH_HEX:-0000000000000000000000000000000000000000000000000000000000000000}"
 KATANA_ARGS_CSV="--http.addr,0.0.0.0,--http.port,5050,--tee.provider,sev-snp"
 AUTO_START_KATANA=1
+
+ensure_tee_args_hash() {
+    local args_csv="$1"
+
+    if [[ "$args_csv" == *"--tee.provider,"* ]] && [[ "$args_csv" != *"--tee.args-hash,"* ]]; then
+        printf '%s,%s,%s' "$args_csv" "--tee.args-hash" "$KATANA_ARGS_HASH_HEX"
+    else
+        printf '%s' "$args_csv"
+    fi
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -95,6 +106,8 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+KATANA_ARGS_CSV="$(ensure_tee_args_hash "$KATANA_ARGS_CSV")"
 
 # ------------------------------------------------------------------------------
 # Launch measurement inputs (must match values documented above)
@@ -140,11 +153,11 @@ show_serial_tail() {
 
 send_control_command() {
     local cmd="$1"
-    local response
-
-    response="$(printf '%s\n' "$cmd" | socat -t 2 -T 2 - UNIX-CONNECT:"$CONTROL_SOCKET" 2>/dev/null | head -n1 || true)"
-    [[ -n "$response" ]] || return 1
-    echo "$response"
+    # Fire-and-forget: send command but don't rely on response.
+    # The virtio-serial chardev is a single bidirectional stream — short-lived
+    # socat connections cause the guest to see EOF and re-open the port, losing
+    # any response in transit. Use serial log for verification instead.
+    printf '%s\n' "$cmd" | socat -t 10 -T 10 - UNIX-CONNECT:"$CONTROL_SOCKET" 2>/dev/null || true
 }
 
 # Cleanup function
@@ -278,12 +291,16 @@ done
 echo "Serial log file created"
 
 if [[ "$AUTO_START_KATANA" -eq 1 ]]; then
+    # ---- Wait for guest to be ready ----
+    # The QEMU chardev creates the host-side UNIX socket immediately at startup,
+    # long before the guest has booted. We must wait for the guest init script to
+    # open its end of the virtio-serial port before sending any commands.
     echo ""
-    echo "Waiting for control socket..."
+    echo "Waiting for guest control channel ready (via serial log)..."
     waited=0
-    while [[ ! -S "$CONTROL_SOCKET" ]]; do
+    while ! grep -q "Control channel ready" "$SERIAL_LOG" 2>/dev/null; do
         if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-            echo "Error: QEMU process died before control socket became ready"
+            echo "Error: QEMU process died before guest became ready"
             show_serial_tail
             exit 1
         fi
@@ -291,35 +308,28 @@ if [[ "$AUTO_START_KATANA" -eq 1 ]]; then
         sleep 1
         waited=$((waited + 1))
         if [[ "$waited" -ge "$CONTROL_TIMEOUT" ]]; then
-            echo "Error: Timeout waiting for control socket: $CONTROL_SOCKET"
+            echo "Error: Timeout waiting for guest control channel"
             show_serial_tail
             exit 1
         fi
     done
-    echo "Control socket ready"
+    echo "Guest control channel ready"
 
+    # ---- Send start command (fire-and-forget) ----
+    # The virtio-serial response path is unreliable with short-lived socat
+    # connections (see debugging report). We send the command but verify
+    # success via the serial log instead.
     echo ""
     echo "Sending async Katana start command..."
-    START_RESPONSE="$(send_control_command "start $KATANA_ARGS_CSV" || true)"
-    if [[ -z "$START_RESPONSE" ]]; then
-        echo "Error: No response from guest control channel"
-        show_serial_tail
-        exit 1
+    if [[ "$KATANA_ARGS_CSV" == *"--tee.provider,"* ]]; then
+        echo "  Using tee.args-hash=${KATANA_ARGS_HASH_HEX}"
     fi
-    echo "  Start response: $START_RESPONSE"
+    send_control_command "start $KATANA_ARGS_CSV"
+    echo "  Command sent (verifying via serial log)"
 
-    case "$START_RESPONSE" in
-        ok\ started*|err\ already-running*)
-            ;;
-        *)
-            echo "Error: Unexpected start response from guest"
-            show_serial_tail
-            exit 1
-            ;;
-    esac
-
+    # ---- Verify Katana started via serial log ----
     echo ""
-    echo "Waiting for Katana running status..."
+    echo "Waiting for Katana to start..."
     waited=0
     while true; do
         if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -328,17 +338,21 @@ if [[ "$AUTO_START_KATANA" -eq 1 ]]; then
             exit 1
         fi
 
-        STATUS_RESPONSE="$(send_control_command "status" || true)"
-        if [[ "$STATUS_RESPONSE" == running\ * ]]; then
-            echo "  Status: $STATUS_RESPONSE"
+        if grep -q "RPC server started" "$SERIAL_LOG" 2>/dev/null; then
+            echo "  Katana is running!"
             break
+        fi
+
+        if grep -q "Katana exited with code" "$SERIAL_LOG" 2>/dev/null; then
+            echo "Error: Katana exited unexpectedly"
+            show_serial_tail
+            exit 1
         fi
 
         sleep 1
         waited=$((waited + 1))
         if [[ "$waited" -ge "$CONTROL_TIMEOUT" ]]; then
-            echo "Error: Timeout waiting for Katana to report running"
-            echo "  Last status: ${STATUS_RESPONSE:-<none>}"
+            echo "Error: Timeout waiting for Katana to start"
             show_serial_tail
             exit 1
         fi

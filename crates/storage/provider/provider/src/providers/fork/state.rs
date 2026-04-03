@@ -234,9 +234,19 @@ impl<Tx1: DbTx> StateProvider for LatestStateProvider<Tx1> {
         address: ContractAddress,
         key: StorageKey,
     ) -> ProviderResult<Option<StorageValue>> {
+        // 1. Check the local (persistent) DB — contains post-fork state changes.
         if let res @ Some(..) = self.local_provider.storage(address, key)? {
-            Ok(res)
-        } else if let Some(value) =
+            return Ok(res);
+        }
+
+        // 2. Check the fork cache DB (in-memory) — contains previously fetched
+        //    fork values from step 3.
+        if let res @ Some(..) = self.fork_provider.db.provider().latest()?.storage(address, key)? {
+            return Ok(res);
+        }
+
+        // 3. Fetch from fork RPC provider (slow — network roundtrip to Pathfinder).
+        if let Some(value) =
             self.fork_provider.backend.get_storage(address, key, self.fork_provider.block_id)?
         {
             let entry = StorageEntry { key, value };

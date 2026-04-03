@@ -305,6 +305,7 @@ SHUTTING_DOWN=0
 KATANA_EXIT_CODE="never"
 CONTROL_PORT_NAME="org.katana.control.0"
 CONTROL_PORT_LINK="/dev/virtio-ports/org.katana.control.0"
+CONTROL_PROTOCOL_VERSION="1"
 
 fatal_boot() {
     log "ERROR: $*"
@@ -352,6 +353,80 @@ resolve_control_port() {
     return 1
 }
 
+## Compute SHA-256 hash of security-critical Katana runtime args.
+##
+## Extracts and sorts critical args (--fork.block, --fork.provider,
+## --fork.no-dev-genesis, --tee.provider) from the comma-separated
+## argument string, then hashes the canonical form.
+##
+## Must match the canonical format used by:
+##   - katana-tee Cairo contract (compute_katana_args_hash)
+##   - sharding_operator Rust (calls::compute_args_hash)
+compute_critical_args_hash() {
+    RAW_ARGS="$*"
+
+    CRITICAL_KV_KEYS="--fork.block --fork.provider --tee.provider"
+    CRITICAL_FLAG_KEYS="--fork.no-dev-genesis"
+
+    OLD_IFS="$IFS"
+    IFS=","
+    # shellcheck disable=SC2086
+    set -- $RAW_ARGS
+    IFS="$OLD_IFS"
+
+    EXTRACTED=""
+    while [ $# -gt 0 ]; do
+        TOKEN="$1"
+        shift
+
+        IS_KV=0
+        for KEY in $CRITICAL_KV_KEYS; do
+            if [ "$TOKEN" = "$KEY" ]; then
+                IS_KV=1
+                break
+            fi
+        done
+        if [ "$IS_KV" = "1" ]; then
+            if [ $# -gt 0 ]; then
+                VALUE="$1"
+                shift
+                if [ -n "$EXTRACTED" ]; then
+                    EXTRACTED="$EXTRACTED
+$TOKEN,$VALUE"
+                else
+                    EXTRACTED="$TOKEN,$VALUE"
+                fi
+            fi
+            continue
+        fi
+
+        IS_FLAG=0
+        for KEY in $CRITICAL_FLAG_KEYS; do
+            if [ "$TOKEN" = "$KEY" ]; then
+                IS_FLAG=1
+                break
+            fi
+        done
+        if [ "$IS_FLAG" = "1" ]; then
+            if [ -n "$EXTRACTED" ]; then
+                EXTRACTED="$EXTRACTED
+$TOKEN"
+            else
+                EXTRACTED="$TOKEN"
+            fi
+        fi
+    done
+
+    if [ -z "$EXTRACTED" ]; then
+        return
+    fi
+
+    SORTED=$(echo "$EXTRACTED" | sort)
+    JOINED=$(echo "$SORTED" | tr '\n' ',' | sed 's/,$//')
+    HASH=$(echo -n "$JOINED" | sha256sum | cut -d ' ' -f 1)
+    echo "$HASH"
+}
+
 handle_control_command() {
     RAW_CMD="$1"
     CMD="${RAW_CMD%% *}"
@@ -361,6 +436,14 @@ handle_control_command() {
     fi
 
     case "$CMD" in
+        protocol)
+            respond_control "ok protocol version=$CONTROL_PROTOCOL_VERSION"
+            ;;
+
+        ping)
+            respond_control "pong"
+            ;;
+
         start)
             refresh_katana_state
             if [ -n "$KATANA_PID" ] && kill -0 "$KATANA_PID" 2>/dev/null; then
@@ -368,14 +451,30 @@ handle_control_command() {
                 return 0
             fi
 
+            # Compute args hash before converting commas to spaces
+            ARGS_HASH=""
+            if [ -n "$CMD_PAYLOAD" ]; then
+                ARGS_HASH=$(compute_critical_args_hash "$CMD_PAYLOAD")
+            fi
+
             KATANA_ARGS=""
             if [ -n "$CMD_PAYLOAD" ]; then
                 KATANA_ARGS="$(echo "$CMD_PAYLOAD" | tr ',' ' ')"
             fi
 
+            # Append --tee.args-hash if critical args were present
+            HASH_FLAG=""
+            if [ -n "$ARGS_HASH" ]; then
+                HASH_FLAG="--tee.args-hash=$ARGS_HASH"
+                log "Critical args hash: $ARGS_HASH"
+            fi
+
             log "Starting katana asynchronously..."
             # shellcheck disable=SC2086
-            /bin/katana --db-dir="$KATANA_DB_DIR" $KATANA_ARGS &
+            # Close fd 3 (control port) for child so it doesn't inherit it.
+            # Without this, the virtio-serial port stays "busy" after Katana exits
+            # and the outer loop can't reopen it.
+            /bin/katana --db-dir="$KATANA_DB_DIR" $HASH_FLAG $KATANA_ARGS 3>&- &
             KATANA_PID=$!
             KATANA_EXIT_CODE="running"
             respond_control "ok started pid=$KATANA_PID"
@@ -394,7 +493,7 @@ handle_control_command() {
             ;;
 
         *)
-            respond_control "err unknown-command"
+            respond_control "err unknown-command $CMD"
             ;;
     esac
 }
@@ -521,6 +620,7 @@ while [ -z "$CONTROL_PORT" ]; do
     [ -n "$CONTROL_PORT" ] || sleep 1
 done
 log "Control channel ready: $CONTROL_PORT"
+log "Control protocol version: $CONTROL_PROTOCOL_VERSION"
 
 while true; do
     refresh_katana_state
@@ -550,6 +650,17 @@ log_info "Creating /etc files"
 echo "root:x:0:0:root:/:/bin/sh" > etc/passwd
 echo "root:x:0:" > etc/group
 log_ok "/etc files created"
+
+# Install CA certificates so HTTPS connections work (e.g. forking from Sepolia RPC).
+# Without these, rustls/reqwest fail with "No CA certificates were loaded from the system".
+CA_CERT_SOURCE="/etc/ssl/certs/ca-certificates.crt"
+if [ -f "$CA_CERT_SOURCE" ]; then
+    mkdir -p etc/ssl/certs
+    cp "$CA_CERT_SOURCE" etc/ssl/certs/ca-certificates.crt
+    log_ok "CA certificates installed"
+else
+    log_warn "CA certificates not found at $CA_CERT_SOURCE (HTTPS will fail in VM)"
+fi
 
 # ==============================================================================
 # SECTION 4: Create CPIO Archive

@@ -69,8 +69,14 @@ pub struct TeeQuoteResponse {
     pub fork_block_number: Option<BlockNumber>,
 
     /// Merkle root of all events in the attested block.
-    /// Included in report_data: Poseidon(state_root, block_hash, fork_block, events_commitment).
+    /// Included in report_data[0..32]:
+    /// Poseidon(state_root, block_hash, fork_block, events_commitment, fork_state_root).
     pub events_commitment: Felt,
+
+    /// The state root at the fork block (or zero when not in fork mode).
+    /// Attested by TEE hardware via report_data so SP1 can verify
+    /// initial storage proofs against the fork-time state.
+    pub fork_state_root: Felt,
 
     /// Poseidon commitment over all L1<->L2 messages from prev_block+1 to block_number.
     ///

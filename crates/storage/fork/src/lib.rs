@@ -31,6 +31,7 @@ use katana_rpc_types::{
     ConfirmedBlockIdOrTag, ContractStorageKeys, GetBlockWithReceiptsResponse,
     GetStorageProofResponse, StateUpdate, TraceBlockTransactionsResponse, TxReceiptWithBlockInfo,
 };
+use katana_rpc_types::event::{EventFilter, GetEventsResponse, ResultPageRequest};
 use katana_starknet::rpc::{
     Client as StarknetClient, Error as StarknetClientError, StarknetApiError,
 };
@@ -110,6 +111,7 @@ impl Backend {
             request_dedup_map: HashMap::new(),
             queued_requests: VecDeque::new(),
             max_concurrent_requests,
+            events_counter: 0,
             #[cfg(test)]
             stats: stats.clone(),
         };
@@ -369,6 +371,26 @@ impl Backend {
         }
     }
 
+    /// Fetch events from upstream for a pre-fork block range.
+    ///
+    /// Proxies `starknet_getEvents` directly to the upstream RPC instead of
+    /// lazy-fetching blocks one-by-one. This is critical for performance when
+    /// Torii indexes thousands of pre-fork blocks through a forked Katana.
+    pub fn get_events(
+        &self,
+        filter: EventFilter,
+        continuation_token: Option<String>,
+        chunk_size: u64,
+    ) -> Result<GetEventsResponse, BackendClientError> {
+        trace!("Requesting events from upstream.");
+        let (req, rx) = BackendRequest::events(filter, continuation_token, chunk_size);
+        self.request(req)?;
+        match rx.recv()? {
+            BackendResponse::Events(res) => res.map_err(Into::into),
+            response => Err(BackendClientError::UnexpectedResponse(anyhow!("{response:?}"))),
+        }
+    }
+
     /// Send a request to the backend thread.
     fn request(&self, req: BackendRequest) -> Result<(), BackendClientError> {
         self.sender.lock().try_send(req).map_err(|e| e.into_send_error())?;
@@ -404,6 +426,7 @@ enum BackendResponse {
     GlobalRoots(BackendResult<GetStorageProofResponse>),
     Proofs(BackendResult<GetStorageProofResponse>),
     TraceBlockTransactions(BackendResult<TraceBlockTransactionsResponse>),
+    Events(BackendResult<GetEventsResponse>),
 }
 
 /// Errors that can occur when interacting with the backend.
@@ -445,6 +468,7 @@ enum BackendRequest {
     ClassHash(Request<(ContractAddress, BlockNumber)>),
     Storage(Request<((ContractAddress, StorageKey), BlockNumber)>),
     Trace(Request<BlockHashOrNumber>),
+    Events(Request<(EventFilter, Option<String>, u64)>),
 }
 
 impl BackendRequest {
@@ -547,6 +571,21 @@ impl BackendRequest {
         let (sender, receiver) = oneshot();
         (BackendRequest::Trace(Request { payload: block_id, sender }), receiver)
     }
+
+    fn events(
+        filter: EventFilter,
+        continuation_token: Option<String>,
+        chunk_size: u64,
+    ) -> (BackendRequest, OneshotReceiver<BackendResponse>) {
+        let (sender, receiver) = oneshot();
+        (
+            BackendRequest::Events(Request {
+                payload: (filter, continuation_token, chunk_size),
+                sender,
+            }),
+            receiver,
+        )
+    }
 }
 
 type BackendRequestFuture = BoxFuture<'static, BackendResponse>;
@@ -566,6 +605,8 @@ enum BackendRequestIdentifier {
     ClassHash(ContractAddress, BlockNumber),
     Storage((ContractAddress, StorageKey), BlockNumber),
     Trace(BlockHashOrNumber),
+    /// Unique per-request ID — events are never deduped.
+    Events(u64),
 }
 
 /// Metrics for the forking backend.
@@ -599,6 +640,8 @@ struct BackendWorker {
     incoming: Receiver<BackendRequest>,
     /// Maximum number of concurrent requests that can be processed.
     max_concurrent_requests: usize,
+    /// Monotonic counter for unique event request keys (never deduped).
+    events_counter: u64,
     /// Metrics for the backend.
     metrics: BackendMetrics,
     #[cfg(test)]
@@ -840,6 +883,26 @@ impl BackendWorker {
                         BackendResponse::TraceBlockTransactions(result)
                     }),
                 );
+            }
+
+            BackendRequest::Events(Request {
+                payload: (filter, continuation_token, chunk_size),
+                sender,
+            }) => {
+                // Events are unique per filter — no dedup. Send response directly.
+                self.dedup_request(
+                    // Use a unique key so events are never deduped across requests.
+                    BackendRequestIdentifier::Events(self.events_counter),
+                    sender,
+                    Box::pin(async move {
+                        let res = provider
+                            .get_events(filter, continuation_token, chunk_size)
+                            .await
+                            .map_err(|e| BackendError::StarknetProvider(Arc::new(e)));
+                        BackendResponse::Events(res)
+                    }),
+                );
+                self.events_counter += 1;
             }
         }
     }

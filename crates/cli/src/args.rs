@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use alloy_primitives::U256;
+use alloy_primitives::{hex, U256};
 #[cfg(feature = "server")]
 use anyhow::bail;
 use anyhow::{Context, Result};
@@ -339,7 +339,7 @@ impl SequencerNodeArgs {
             #[cfg(feature = "cartridge")]
             paymaster,
             #[cfg(feature = "tee")]
-            tee: self.tee_config(),
+            tee: self.tee_config()?,
         })
     }
 
@@ -684,10 +684,20 @@ impl SequencerNodeArgs {
     }
 
     #[cfg(feature = "tee")]
-    fn tee_config(&self) -> Option<TeeConfig> {
-        self.tee
-            .tee_provider
-            .map(|provider_type| TeeConfig { provider_type, fork_block_number: None })
+    fn tee_config(&self) -> Result<Option<TeeConfig>> {
+        let Some(provider_type) = self.tee.tee_provider else {
+            return Ok(None);
+        };
+
+        let raw_args_hash = self.tee.args_hash.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("--tee.args-hash is required when --tee.provider is enabled")
+        })?;
+
+        Ok(Some(TeeConfig {
+            provider_type,
+            args_hash: parse_args_hash_hex(raw_args_hash)?,
+            fork_block_number: None,
+        }))
     }
 
     /// Parse the node config from the command line arguments and the config file,
@@ -779,6 +789,21 @@ impl SequencerNodeArgs {
     fn tracer_config(&self) -> Option<katana_tracing::TracerConfig> {
         self.tracer.config()
     }
+}
+
+#[cfg(feature = "tee")]
+fn parse_args_hash_hex(value: &str) -> Result<[u8; 32]> {
+    let trimmed = value.trim();
+    let hex_value = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    let bytes = hex::decode(hex_value).context("tee args hash must be valid hex")?;
+
+    if bytes.len() != 32 {
+        anyhow::bail!("tee args hash must be exactly 32 bytes, got {} bytes", bytes.len());
+    }
+
+    let mut args_hash = [0u8; 32];
+    args_hash.copy_from_slice(&bytes);
+    Ok(args_hash)
 }
 
 #[cfg(test)]

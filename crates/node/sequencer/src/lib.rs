@@ -372,10 +372,20 @@ where
                     }
                 };
 
-                let api = TeeApi::new(provider.clone(), tee_provider, tee_config.fork_block_number);
+                let api = TeeApi::new(
+                    provider.clone(),
+                    tee_provider,
+                    tee_config.fork_block_number,
+                    tee_config.args_hash,
+                );
                 rpc_modules.merge(TeeApiServer::into_rpc(api))?;
 
-                info!(target: "node", provider = ?tee_config.provider_type, "TEE API enabled");
+                info!(
+                    target: "node",
+                    provider = ?tee_config.provider_type,
+                    args_hash = %hex::encode(tee_config.args_hash),
+                    "TEE API enabled"
+                );
             }
         }
 

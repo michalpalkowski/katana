@@ -33,6 +33,7 @@ pub use error::TeeError;
 #[cfg(test)]
 pub use mock::MockProvider;
 pub use provider::TeeProvider;
+use sha2::{Digest, Sha256};
 #[cfg(feature = "snp")]
 pub use snp::SevSnpProvider;
 
@@ -64,5 +65,48 @@ impl std::str::FromStr for TeeProviderType {
             "sev-snp" | "snp" => Ok(Self::SevSnp),
             other => Err(format!("Unknown TEE provider: '{other}'. Available providers: sev-snp")),
         }
+    }
+}
+
+/// Compute the canonical SHA-256 hash of security-critical Katana runtime args.
+///
+/// This mirrors the measured hypervisor init flow for the stable SEV-SNP forked mode:
+/// `--fork.block`, `--fork.no-dev-genesis`, `--fork.provider`, `--tee.provider`.
+pub fn compute_args_hash(fork_url: &str, fork_block_number: u64) -> [u8; 32] {
+    let canonical = format!(
+        "--fork.block,{fork_block_number},--fork.no-dev-genesis,--fork.provider,{fork_url},--tee.provider,{}",
+        TeeProviderType::SevSnp
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    hasher.finalize().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_args_hash_is_deterministic() {
+        let a = compute_args_hash("https://rpc.example", 12345);
+        let b = compute_args_hash("https://rpc.example", 12345);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn compute_args_hash_matches_expected_canonical_string() {
+        let hash = compute_args_hash("https://rpc.example", 12345);
+        let expected: [u8; 32] = Sha256::digest(
+            b"--fork.block,12345,--fork.no-dev-genesis,--fork.provider,https://rpc.example,--tee.provider,sev-snp",
+        )
+        .into();
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn compute_args_hash_changes_with_fork_block_number() {
+        let a = compute_args_hash("https://rpc.example", 12345);
+        let b = compute_args_hash("https://rpc.example", 12346);
+        assert_ne!(a, b);
     }
 }
