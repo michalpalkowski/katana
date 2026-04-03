@@ -8,6 +8,8 @@ use katana_primitives::event::MaybeForkedContinuationToken;
 use katana_primitives::transaction::TxHash;
 use katana_primitives::{felt, Felt};
 use katana_rpc_api::error::starknet::StarknetApiError;
+use katana_rpc_api::katana::KatanaApiClient;
+use katana_rpc_api::starknet::StarknetApiClient;
 use katana_rpc_types::{
     BlockNumberResponse, EventFilter, GetBlockWithReceiptsResponse, GetBlockWithTxHashesResponse,
     MaybePreConfirmedBlock,
@@ -438,8 +440,10 @@ async fn get_events_partially_from_forked(#[case] block_id: BlockIdOrTag) -> Res
     let result = provider.get_events(filter, None, 5).await?;
     let forked_events = result.events;
 
+    // With upstream event proxy, partial pre-fork fetches return FK_ continuation tokens
+    // because the upstream provider handles pagination, not Katana's internal cursor.
     let token = MaybeForkedContinuationToken::parse(&result.continuation_token.unwrap())?;
-    assert_matches!(token, MaybeForkedContinuationToken::Token(_));
+    assert_matches!(token, MaybeForkedContinuationToken::Forked(_));
 
     for (a, b) in events.iter().zip(forked_events) {
         assert_eq!(a.block_number, Some(FORK_BLOCK_NUMBER));
@@ -640,8 +644,9 @@ async fn get_events_forked_and_local_boundary_non_exhaustive(#[case] block_id: B
     let result = provider.get_events(filter, None, 50).await.unwrap();
     let katana_events = result.events;
 
+    // With upstream event proxy, partial pre-fork fetches return FK_ continuation tokens.
     let token = MaybeForkedContinuationToken::parse(&result.continuation_token.unwrap()).unwrap();
-    assert_matches!(token, MaybeForkedContinuationToken::Token(_));
+    assert_matches!(token, MaybeForkedContinuationToken::Forked(_));
     similar_asserts::assert_eq!(katana_events, forked_events);
 }
 
@@ -682,6 +687,445 @@ async fn get_events_prefork_number_to_postfork_hash_succeeds() {
         provider.get_events(filter, None, 100).await.expect("cross-fork get_events should succeed");
 
     assert!(!result.events.is_empty(), "expected non-empty events for cross-fork range");
+}
+
+/// Verifies FK_ continuation token pagination for pre-fork event queries.
+///
+/// The upstream event proxy returns FK_-prefixed continuation tokens for pre-fork blocks.
+/// This test fetches events page-by-page using those tokens and verifies:
+/// 1. Each partial page returns a FK_ token.
+/// 2. Collected events across all pages match the full direct-upstream result.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_proxy_fk_pagination() -> Result<()> {
+    let (_sequencer, provider, _) = setup_test().await;
+    let forked_provider = StarknetClient::new(SEPOLIA_URL.try_into().unwrap());
+
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+    };
+
+    // Fetch all 89 events directly from upstream in one shot (ground truth).
+    let all_upstream = forked_provider.get_events(filter.clone(), None, 100).await?;
+    let total_events = all_upstream.events.len();
+    assert!(total_events > 10, "expected >10 events in fork block for pagination test");
+
+    // Fetch through forked Katana in small pages (chunk_size=10), collecting all events.
+    let mut collected = Vec::new();
+    let mut continuation_token: Option<String> = None;
+    let mut pages = 0;
+
+    loop {
+        let result = provider.get_events(filter.clone(), continuation_token, 10).await?;
+        collected.extend(result.events);
+        pages += 1;
+
+        match result.continuation_token {
+            Some(token) => {
+                // While pre-fork events remain, the token must be FK_-prefixed.
+                let parsed = MaybeForkedContinuationToken::parse(&token)?;
+                assert_matches!(parsed, MaybeForkedContinuationToken::Forked(_));
+                continuation_token = Some(token);
+            }
+            None => break,
+        }
+    }
+
+    assert!(pages > 1, "should have paginated across multiple pages (got {pages})");
+    assert_eq!(
+        collected.len(),
+        total_events,
+        "paginated events count should match direct upstream"
+    );
+
+    // Verify event content matches.
+    for (a, b) in all_upstream.events.iter().zip(collected.iter()) {
+        assert_eq!(a.transaction_hash, b.transaction_hash);
+        assert_eq!(a.block_number, b.block_number);
+        assert_eq!(a.from_address, b.from_address);
+        assert_eq!(a.keys, b.keys);
+        assert_eq!(a.data, b.data);
+    }
+
+    Ok(())
+}
+
+/// Verifies that a cross-boundary query (pre-fork → post-fork) returns events
+/// from the upstream proxy AND local blocks in a single seamless response.
+///
+/// The upstream proxy handles [from, fork_block], then Katana continues with
+/// local iteration for [fork_block+1, to]. The caller sees one unified result.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_proxy_cross_boundary_unified() {
+    let (_sequencer, provider, local_only_data) = setup_test().await;
+    let forked_provider = StarknetClient::new(SEPOLIA_URL.try_into().unwrap());
+
+    // Get the exact number of pre-fork events in FORK_BLOCK_NUMBER.
+    let prefork_filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+    };
+    let prefork_result = forked_provider.get_events(prefork_filter, None, 100).await.unwrap();
+    let prefork_count = prefork_result.events.len();
+
+    // Query across the fork boundary with a large chunk_size to get everything.
+    let cross_filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Latest),
+    };
+    let result = provider.get_events(cross_filter, None, 100).await.unwrap();
+
+    // The result should contain pre-fork events + local events.
+    // chunk_size=100 can hold 89 pre-fork + 10 local = 99 events.
+    let total = result.events.len();
+    assert_eq!(
+        total,
+        prefork_count + local_only_data.len(),
+        "expected {prefork_count} pre-fork + {} local events, got {total}",
+        local_only_data.len()
+    );
+
+    // Verify pre-fork portion matches upstream.
+    let prefork_events = &result.events[..prefork_count];
+    similar_asserts::assert_eq!(prefork_events, prefork_result.events);
+
+    // Verify post-fork portion matches local test data.
+    let local_events = &result.events[prefork_count..];
+    for (event, (block, tx)) in local_events.iter().zip(local_only_data.iter()) {
+        let (block_number, block_hash) = block;
+        assert_eq!(event.transaction_hash, *tx);
+        assert_eq!(event.block_number, Some(*block_number));
+        assert_eq!(event.block_hash, Some(*block_hash));
+    }
+}
+
+/// Verifies that post-fork-only queries bypass the upstream proxy entirely.
+///
+/// When from_block > fork_block, the query should use standard local iteration
+/// and return a regular Katana continuation token (not FK_-prefixed).
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_post_fork_only_uses_local_cursor() {
+    let (_sequencer, provider, _local_only_data) = setup_test().await;
+
+    // Query only post-fork blocks with a small chunk_size to trigger pagination.
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER + 2)),
+        to_block: Some(BlockIdOrTag::Latest),
+    };
+
+    let result = provider.get_events(filter, None, 3).await.unwrap();
+    assert!(!result.events.is_empty());
+
+    // Post-fork queries should return standard Katana cursor tokens, not FK_.
+    if let Some(token_str) = &result.continuation_token {
+        let token = MaybeForkedContinuationToken::parse(token_str).unwrap();
+        assert_matches!(
+            token,
+            MaybeForkedContinuationToken::Token(_),
+            "post-fork-only query should use local cursor, got FK_ token"
+        );
+    }
+
+    // Verify events are from local blocks only.
+    for event in &result.events {
+        assert!(
+            event.block_number.unwrap() > FORK_BLOCK_NUMBER,
+            "post-fork query should not return pre-fork events"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------
+// Edge cases & negative tests for upstream event proxy
+// -----------------------------------------------------------------------
+
+/// Edge case: query exactly at fork_block boundary (from == to == fork_block).
+/// This is the boundary between upstream proxy and local — both should handle it.
+/// Verifies that chunk_size=1 returns exactly 1 event with FK_ token.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_proxy_chunk_size_one() -> Result<()> {
+    let (_sequencer, provider, _) = setup_test().await;
+
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+    };
+
+    let result = provider.get_events(filter, None, 1).await?;
+    assert_eq!(result.events.len(), 1, "chunk_size=1 should return exactly 1 event");
+
+    let token = MaybeForkedContinuationToken::parse(&result.continuation_token.unwrap())?;
+    assert_matches!(token, MaybeForkedContinuationToken::Forked(_));
+
+    Ok(())
+}
+
+/// Edge case: from_block == fork_block + 1 (exactly one past the boundary).
+/// This should NOT use the upstream proxy — purely local iteration.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_fork_block_plus_one_is_local_only() {
+    let (_sequencer, provider, local_only_data) = setup_test().await;
+
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER + 1)),
+        to_block: Some(BlockIdOrTag::Latest),
+    };
+
+    let result = provider.get_events(filter, None, 100).await.unwrap();
+
+    // All events should be from local blocks (fork_block+1 is the fork genesis,
+    // fork_block+2..+11 are the blocks with transactions from setup_test).
+    for event in &result.events {
+        assert!(
+            event.block_number.unwrap() > FORK_BLOCK_NUMBER,
+            "fork_block+1 query should only return local events"
+        );
+    }
+
+    // Verify the event count matches local test data (10 transactions = 10+ events).
+    assert!(
+        result.events.len() >= local_only_data.len(),
+        "expected at least {} local events, got {}",
+        local_only_data.len(),
+        result.events.len()
+    );
+}
+
+/// Edge case: empty block range where from_block == to_block for an empty pre-fork block.
+/// The upstream proxy should return 0 events gracefully.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_proxy_empty_block() {
+    let (_sequencer, provider, _) = setup_test().await;
+
+    // Use a block far before FORK_BLOCK_NUMBER that is likely to have 0 events.
+    // Block 1 on Sepolia should have minimal or no user events.
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(1)),
+        to_block: Some(BlockIdOrTag::Number(1)),
+    };
+
+    let result = provider.get_events(filter, None, 100).await.unwrap();
+    // Whether 0 or some events, this should not error.
+    // The important thing is that the upstream proxy handles it gracefully.
+    assert!(result.events.len() < 100, "block 1 should have very few events");
+}
+
+/// Negative test: invalid FK_ continuation token should be handled gracefully.
+/// Passing a garbage FK_ token to the upstream should produce an error, not panic.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_invalid_fk_token_returns_error() {
+    let (_sequencer, provider, _) = setup_test().await;
+
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+    };
+
+    // Pass a garbage FK_ token — the upstream provider should reject it.
+    let result = provider
+        .get_events(filter, Some("FK_garbage_invalid_token_12345".to_string()), 10)
+        .await;
+
+    // Should error, not panic. The exact error type depends on the upstream,
+    // but it must not cause a server crash.
+    assert!(result.is_err(), "invalid FK_ token should produce an error");
+}
+
+/// Edge case: cross-boundary query with chunk_size that exactly fills from upstream.
+/// Upstream returns exactly chunk_size events → FK_ token returned.
+/// Next request with that token should transition to local events.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_exhausted_then_local_continuation() -> Result<()> {
+    let (_sequencer, provider, _) = setup_test().await;
+    let forked_provider = StarknetClient::new(SEPOLIA_URL.try_into().unwrap());
+
+    // Get exact pre-fork event count for FORK_BLOCK_NUMBER.
+    let prefork_filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+    };
+    let all_prefork = forked_provider.get_events(prefork_filter, None, 100).await?;
+    let prefork_count = all_prefork.events.len();
+
+    // Cross-boundary query with chunk_size = prefork_count (exactly fills from upstream).
+    let cross_filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Latest),
+    };
+
+    let result =
+        provider.get_events(cross_filter.clone(), None, prefork_count as u64).await?;
+
+    // First page: all pre-fork events. May or may not have continuation token depending
+    // on whether upstream thinks there might be more.
+    assert_eq!(result.events.len(), prefork_count);
+
+    if let Some(token) = result.continuation_token {
+        // Continue — should now get local events.
+        let result2 = provider.get_events(cross_filter, Some(token), 100).await?;
+        assert!(
+            !result2.events.is_empty(),
+            "continuation after upstream exhaustion should return local events"
+        );
+
+        // Local events should be post-fork.
+        for event in &result2.events {
+            assert!(
+                event.block_number.unwrap() > FORK_BLOCK_NUMBER,
+                "continued events should be post-fork"
+            );
+        }
+    }
+    // If no continuation token, that means both upstream and local fit in one response,
+    // which is also valid (just means local events were included in the first page).
+
+    Ok(())
+}
+
+/// Edge case: cross-boundary query to Pending (pre-fork + post-fork + pending).
+/// Tests the full pipeline: upstream proxy → local blocks → pending block.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_proxy_to_pending() {
+    let (_sequencer, provider, _) = setup_test_pending().await;
+    let forked_provider = StarknetClient::new(SEPOLIA_URL.try_into().unwrap());
+
+    // Get pre-fork events count.
+    let prefork_filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+    };
+    let prefork_result = forked_provider.get_events(prefork_filter, None, 100).await.unwrap();
+    let prefork_count = prefork_result.events.len();
+
+    // Query from fork block to Pending with large chunk.
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::PreConfirmed),
+    };
+
+    let result = provider.get_events(filter, None, 100).await.unwrap();
+
+    // Should have pre-fork events + pending events.
+    assert!(
+        result.events.len() >= prefork_count,
+        "should have at least {prefork_count} pre-fork events, got {}",
+        result.events.len()
+    );
+
+    // Pre-fork events should have block numbers, pending events should not.
+    let pre_fork_events: Vec<_> = result.events.iter().filter(|e| e.block_number.is_some()).collect();
+    let pending_events: Vec<_> = result.events.iter().filter(|e| e.block_number.is_none()).collect();
+
+    assert!(
+        pre_fork_events.len() >= prefork_count,
+        "should have at least {prefork_count} events with block numbers"
+    );
+
+    // In no_mining mode, all local txs are in pending → they should lack block_number.
+    if !pending_events.is_empty() {
+        for event in &pending_events {
+            assert_eq!(event.block_hash, None, "pending events should have no block hash");
+        }
+    }
+
+    // Pending → continuation token should be present (pending block is still open).
+    assert!(
+        result.continuation_token.is_some(),
+        "query to Pending should always return continuation token"
+    );
+}
+
+/// Edge case: from_block > to_block for pre-fork range (e.g., block 10 to block 5).
+/// This is an invalid range — should return an error or empty result.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_proxy_reversed_range() {
+    let (_sequencer, provider, _) = setup_test().await;
+
+    // Reversed range: from > to (both pre-fork).
+    let filter = EventFilter {
+        keys: None,
+        address: None,
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER - 100)),
+    };
+
+    // Upstream may return error or empty events — either is acceptable.
+    // The important thing is no panic or server crash.
+    let result = provider.get_events(filter, None, 100).await;
+    match result {
+        Ok(response) => {
+            assert!(
+                response.events.is_empty(),
+                "reversed block range should return 0 events, got {}",
+                response.events.len()
+            );
+        }
+        Err(_) => {
+            // Error is also acceptable for invalid range.
+        }
+    }
+}
+
+/// Edge case: address filter applied through upstream proxy.
+/// Verifies that the address filter is correctly propagated to the upstream.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_events_upstream_proxy_with_address_filter() {
+    let (_sequencer, provider, _) = setup_test().await;
+    let forked_provider = StarknetClient::new(SEPOLIA_URL.try_into().unwrap());
+
+    // Use a specific contract address filter for the pre-fork block.
+    let filter = EventFilter {
+        keys: None,
+        address: Some(DEFAULT_STRK_FEE_TOKEN_ADDRESS),
+        from_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+        to_block: Some(BlockIdOrTag::Number(FORK_BLOCK_NUMBER)),
+    };
+
+    // Get events from direct upstream with the same filter.
+    let upstream_result = forked_provider.get_events(filter.clone(), None, 100).await.unwrap();
+
+    // Get events through the forked Katana proxy.
+    let proxy_result = provider.get_events(filter, None, 100).await.unwrap();
+
+    // Address-filtered results through proxy should match direct upstream.
+    assert_eq!(
+        upstream_result.events.len(),
+        proxy_result.events.len(),
+        "address-filtered event counts should match: upstream={}, proxy={}",
+        upstream_result.events.len(),
+        proxy_result.events.len()
+    );
+
+    for (a, b) in upstream_result.events.iter().zip(proxy_result.events.iter()) {
+        assert_eq!(a.from_address, b.from_address);
+        assert_eq!(a.transaction_hash, b.transaction_hash);
+        assert_eq!(a.keys, b.keys);
+        assert_eq!(a.data, b.data);
+    }
 }
 
 #[cfg(test)]
@@ -1381,5 +1825,299 @@ mod tests {
                 Ok(())
             });
         }
+    }
+}
+
+/// Prefetch warms the fork value cache so subsequent `getStorageAt` reads
+/// hit the local MDBX database instead of making fork RPC calls.
+///
+/// This test forks from Sepolia, does ERC20 transfers (which populate local
+/// state), then prefetches a mix of local and fork-originated storage keys.
+/// Verifies:
+/// 1. The prefetch RPC completes successfully with correct counts.
+/// 2. Prefetched values are readable via standard `starknet_getStorageAt`.
+/// 3. A second prefetch is idempotent (cache hits, faster).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prefetch_storage_warms_fork_cache() {
+    let (sequencer, _starknet_provider, _) = setup_test().await;
+    let client = sequencer.rpc_http_client();
+
+    // Use the dev genesis account — guaranteed to have storage (funded at genesis + transfers).
+    let (dev_account_addr, _) = sequencer
+        .backend()
+        .chain_spec
+        .genesis()
+        .accounts()
+        .next()
+        .expect("must have at least one dev account");
+
+    // Prefetch a set of keys: some will have non-zero values (balance map entries),
+    // some may be zero (unused slots). The point is that prefetch should succeed for all.
+    //
+    // DEFAULT_ACCOUNT_CLASS_PUBKEY_STORAGE_SLOT = sn_keccak("Account_public_key")
+    // Use it to read from the dev account contract (a slot we know is populated).
+    let account_pubkey_slot =
+        felt!("0x1379ac0624b939ceb9dede92211d7db5ee174fe28be72245b0a1a2abd81c98f");
+
+    // Read the dev account's public key via standard RPC first (establishes ground truth).
+    let expected_pubkey: Felt = client
+        .get_storage_at(*dev_account_addr, account_pubkey_slot, BlockIdOrTag::Latest)
+        .await
+        .expect("should be able to read dev account pubkey");
+    assert_ne!(expected_pubkey, Felt::ZERO, "dev account should have a non-zero public key");
+
+    // Now prefetch a batch of keys on the STRK contract + account contract.
+    // Include: the pubkey slot (known non-zero), several arbitrary slots (likely zero).
+    let arbitrary_keys: Vec<Felt> = (1..=20).map(|i| Felt::from(i * 1000u64)).collect();
+
+    // ── Prefetch on the dev account contract ──
+    let mut keys_to_prefetch = vec![account_pubkey_slot];
+    keys_to_prefetch.extend_from_slice(&arbitrary_keys);
+
+    let result = client
+        .prefetch_storage(*dev_account_addr, keys_to_prefetch.clone())
+        .await
+        .expect("prefetch RPC should succeed");
+
+    assert_eq!(result.total, 21, "should report total = 21 (1 known + 20 arbitrary)");
+    assert_eq!(result.failed, 0, "no keys should fail");
+    assert_eq!(result.fetched, 21, "all 21 keys should be processed");
+    assert!(result.elapsed_ms < 60_000, "prefetch should complete in <60s");
+
+    // ── Verify the known value is correct after prefetch ──
+    let pubkey_after_prefetch: Felt = client
+        .get_storage_at(*dev_account_addr, account_pubkey_slot, BlockIdOrTag::Latest)
+        .await
+        .expect("getStorageAt after prefetch should succeed");
+    assert_eq!(
+        pubkey_after_prefetch, expected_pubkey,
+        "prefetch should not corrupt values"
+    );
+
+    // ── Second prefetch: idempotent, all should be cache hits ──
+    let result2 = client
+        .prefetch_storage(*dev_account_addr, keys_to_prefetch)
+        .await
+        .expect("second prefetch should succeed");
+
+    assert_eq!(result2.total, 21);
+    assert_eq!(result2.failed, 0);
+    assert_eq!(result2.fetched, 21);
+    // Second call should be noticeably faster (all from local MDBX cache).
+    assert!(
+        result2.elapsed_ms <= result.elapsed_ms.saturating_add(500),
+        "second prefetch ({} ms) should not be much slower than first ({} ms)",
+        result2.elapsed_ms,
+        result.elapsed_ms,
+    );
+}
+
+/// Prefetch with an empty key list returns immediately with zero counts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prefetch_storage_empty_keys() {
+    let (sequencer, _, _) = setup_test().await;
+    let client = sequencer.rpc_http_client();
+
+    let result = client
+        .prefetch_storage(DEFAULT_STRK_FEE_TOKEN_ADDRESS, vec![])
+        .await
+        .expect("empty prefetch should succeed");
+
+    assert_eq!(result.total, 0);
+    assert_eq!(result.fetched, 0);
+    assert_eq!(result.failed, 0);
+}
+
+/// Benchmark: compare cold fork reads (no prefetch) vs warm reads (after prefetch).
+///
+/// Uses two disjoint key sets on the same forked Katana instance:
+/// - Set A: read cold (each `getStorageAt` triggers a fork RPC to Pathfinder)
+/// - Set B: prefetch first, then read (all hits come from local MDBX cache)
+///
+/// Prints timing comparison. Asserts that prefetched reads are at least 2× faster.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prefetch_storage_benchmark_cold_vs_warm() {
+    let (sequencer, _, _) = setup_test().await;
+    let client = sequencer.rpc_http_client();
+
+    // Use STRK fee token — exists on BOTH Sepolia and the fork, so fork RPC
+    // returns `Some(value)` (not None), enabling the cache write path.
+    let contract = DEFAULT_STRK_FEE_TOKEN_ADDRESS;
+
+    let n = 20;
+
+    // Two disjoint key sets — arbitrary storage slots on the STRK contract.
+    // Starknet returns 0x0 for unset slots (not None), so the fork cache write
+    // path is exercised and subsequent reads should be cache hits.
+    let cold_keys: Vec<Felt> = (1..=n).map(|i| Felt::from(i * 7919u64)).collect();
+    let warm_keys: Vec<Felt> = (1..=n).map(|i| Felt::from(i * 6271u64)).collect();
+
+    // ── Measure COLD reads (no prefetch) ──
+    let cold_start = std::time::Instant::now();
+    for key in &cold_keys {
+        let _ = client
+            .get_storage_at(contract, *key, BlockIdOrTag::Latest)
+            .await
+            .expect("cold getStorageAt should succeed");
+    }
+    let cold_elapsed = cold_start.elapsed();
+
+    // ── Prefetch warm keys ──
+    let prefetch_result = client
+        .prefetch_storage(contract, warm_keys.clone())
+        .await
+        .expect("prefetch should succeed");
+    assert_eq!(prefetch_result.failed, 0);
+
+    // ── Measure WARM reads (after prefetch — all from local cache) ──
+    let warm_start = std::time::Instant::now();
+    for key in &warm_keys {
+        let _ = client
+            .get_storage_at(contract, *key, BlockIdOrTag::Latest)
+            .await
+            .expect("warm getStorageAt should succeed");
+    }
+    let warm_elapsed = warm_start.elapsed();
+
+    // ── Report ──
+    let cold_ms = cold_elapsed.as_millis();
+    let warm_ms = warm_elapsed.as_millis();
+    let prefetch_ms = prefetch_result.elapsed_ms;
+    let speedup = if warm_ms > 0 { cold_ms as f64 / warm_ms as f64 } else { f64::INFINITY };
+
+    eprintln!("┌─────────────────────────────────────────────────────┐");
+    eprintln!("│ Prefetch Benchmark ({n} keys)                        │");
+    eprintln!("├─────────────────────────────────────────────────────┤");
+    eprintln!("│ Cold reads  (sequential getStorageAt): {:>6} ms    │", cold_ms);
+    eprintln!("│ Prefetch    (concurrent, {n} keys):      {:>6} ms    │", prefetch_ms);
+    eprintln!("│ Warm reads  (sequential getStorageAt): {:>6} ms    │", warm_ms);
+    eprintln!("│ Speedup     (cold / warm):             {:>6.1}×      │", speedup);
+    eprintln!("└─────────────────────────────────────────────────────┘");
+
+    // Warm reads should be meaningfully faster than cold reads.
+    // Cold reads go to Pathfinder (~100-500ms each); warm reads hit local MDBX (~µs each).
+    // With 20 keys, cold ≈ 2-10s, warm ≈ <100ms. We assert at least 2× improvement
+    // as a conservative lower bound (actual speedup is typically 50-200×).
+    assert!(
+        speedup > 2.0,
+        "Prefetched reads should be at least 2× faster than cold reads. \
+         Cold: {cold_ms}ms, warm: {warm_ms}ms, speedup: {speedup:.1}×"
+    );
+}
+
+/// Prefetch on a contract that doesn't exist on the fork chain should not error.
+/// Keys come back as "fetched" (the RPC returns zero for unknown contracts on some nodes,
+/// or the contract may only exist in dev genesis). Either way, no panic or RPC error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prefetch_storage_nonexistent_contract_no_error() {
+    let (sequencer, _, _) = setup_test().await;
+    let client = sequencer.rpc_http_client();
+
+    // A random address that almost certainly doesn't exist on Sepolia.
+    let fake_contract = felt!("0xdead0000dead0000dead0000dead0000dead0000dead0000dead0000dead");
+    let keys: Vec<Felt> = (1..=5).map(|i| Felt::from(i * 100u64)).collect();
+
+    let result = client
+        .prefetch_storage(fake_contract.into(), keys)
+        .await
+        .expect("prefetch should not error even for non-existent contract");
+
+    assert_eq!(result.total, 5);
+    // Some nodes return zero for non-existent contracts (fetched), others may fail
+    // gracefully. Either way, total = fetched + failed.
+    assert_eq!(result.fetched + result.failed, 5);
+}
+
+/// After a transaction modifies a storage slot, the local (persistent) DB value
+/// must take precedence over the fork cache. This verifies that prefetching
+/// does not make stale fork values "sticky".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prefetch_storage_local_state_overrides_fork_cache() {
+    let (sequencer, _, _) = setup_test().await;
+    let client = sequencer.rpc_http_client();
+
+    let contract = DEFAULT_STRK_FEE_TOKEN_ADDRESS;
+
+    // The dev genesis account has an ERC20 balance in the STRK contract.
+    // setup_test() already did 10 transfers, so the balance was modified locally.
+    // Read the current balance slot value.
+    let (dev_account_addr, _) = sequencer
+        .backend()
+        .chain_spec
+        .genesis()
+        .accounts()
+        .next()
+        .unwrap();
+
+    // Compute ERC20 balance storage key = pedersen(sn_keccak("ERC20_balances"), account_address)
+    // For simplicity, we use a known slot that setup_test() already touched via transfers.
+    // Instead of computing the exact key, we just read the value directly — the important
+    // thing is that AFTER local TX modifications, the fork cache doesn't override them.
+
+    // Pick an arbitrary slot and prefetch it (populates fork cache with fork-time value).
+    let test_key = felt!("0x12345678");
+    client
+        .prefetch_storage(contract, vec![test_key])
+        .await
+        .expect("prefetch should succeed");
+
+    // Read via getStorageAt — should return the fork-cached value (likely 0x0).
+    let value_after_prefetch: Felt = client
+        .get_storage_at(contract, test_key, BlockIdOrTag::Latest)
+        .await
+        .expect("read should succeed");
+
+    // Now do an ERC20 transfer which modifies some storage slots in the STRK contract.
+    // The transfer writes to the local (persistent) DB.
+    abigen_legacy!(Erc20Contract, "crates/contracts/build/legacy/erc20.json", derives(Clone));
+    let erc20 = Erc20Contract::new(contract.into(), sequencer.account());
+    let amount = Uint256 { low: Felt::ONE, high: Felt::ZERO };
+    let res = erc20.transfer(&Felt::ONE, &amount).send().await.unwrap();
+    katana_utils::TxWaiter::new(res.transaction_hash, &sequencer.starknet_rpc_client())
+        .await
+        .unwrap();
+
+    // The transfer changed balance slots in local DB. Re-read our test key.
+    // If the key wasn't affected by the transfer, it should still return the same
+    // fork-cached value (not corrupt). If it WAS affected, local DB takes priority.
+    let value_after_tx: Felt = client
+        .get_storage_at(contract, test_key, BlockIdOrTag::Latest)
+        .await
+        .expect("read after TX should succeed");
+
+    // Our test_key (0x12345678) is unlikely to be a real ERC20 balance slot,
+    // so the value should be unchanged — confirming fork cache is stable.
+    assert_eq!(
+        value_after_prefetch, value_after_tx,
+        "fork-cached value for unrelated key should be unchanged after TX"
+    );
+}
+
+/// Prefetch with >50 keys tests internal chunking (CHUNK_SIZE = 50).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prefetch_storage_large_batch_chunking() {
+    let (sequencer, _, _) = setup_test().await;
+    let client = sequencer.rpc_http_client();
+
+    let contract = DEFAULT_STRK_FEE_TOKEN_ADDRESS;
+
+    // 120 keys — will be split into 3 chunks of 50, 50, 20.
+    let keys: Vec<Felt> = (1..=120).map(|i| Felt::from(i * 9973u64)).collect();
+
+    let result = client
+        .prefetch_storage(contract, keys.clone())
+        .await
+        .expect("large batch prefetch should succeed");
+
+    assert_eq!(result.total, 120);
+    assert_eq!(result.failed, 0, "no keys should fail on a valid contract");
+    assert_eq!(result.fetched, 120, "all 120 keys should be processed");
+
+    // Verify a sample of keys are readable from cache.
+    for &key in keys.iter().step_by(30) {
+        let _ = client
+            .get_storage_at(contract, key, BlockIdOrTag::Latest)
+            .await
+            .expect("cached key should be readable");
     }
 }

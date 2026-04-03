@@ -11,7 +11,7 @@ use katana_provider::api::state_update::StateUpdateProvider;
 use katana_provider::{ProviderFactory, ProviderRO};
 use katana_rpc_api::error::katana::KatanaApiError;
 use katana_rpc_api::error::starknet::StarknetApiError;
-use katana_rpc_api::katana::{KatanaApiServer, StorageDiffEntry};
+use katana_rpc_api::katana::{KatanaApiServer, PrefetchResult, StorageDiffEntry};
 use katana_rpc_api::starknet::StarknetWriteApiServer;
 use katana_rpc_types::broadcasted::{
     AddDeclareTransactionResponse, AddDeployAccountTransactionResponse,
@@ -151,6 +151,89 @@ where
         .await
         .map_err(|e| KatanaApiError::InternalError(e.to_string()))?
     }
+
+    pub(super) async fn prefetch_storage_slots(
+        &self,
+        contract_address: ContractAddress,
+        keys: Vec<StorageKey>,
+    ) -> Result<PrefetchResult, KatanaApiError> {
+        use katana_rpc_types::BlockIdOrTag;
+
+        let start = std::time::Instant::now();
+        let total = keys.len() as u32;
+
+        if keys.is_empty() {
+            return Ok(PrefetchResult { total: 0, fetched: 0, failed: 0, elapsed_ms: 0 });
+        }
+
+        // Split keys into chunks — each chunk runs as one blocking task that
+        // sequentially reads its keys. The fork BackendWorker handles up to 200
+        // concurrent RPC requests across all tasks.
+        const CHUNK_SIZE: usize = 50;
+        let chunks: Vec<Vec<StorageKey>> = keys.chunks(CHUNK_SIZE).map(|c| c.to_vec()).collect();
+
+        let mut join_set = tokio::task::JoinSet::new();
+        for chunk in chunks {
+            let this = self.clone();
+            join_set.spawn(async move {
+                this.on_io_blocking_task(move |api| {
+                    let state = api.state(&BlockIdOrTag::Latest)?;
+                    let mut fetched = 0u32;
+                    let mut failed = 0u32;
+                    for key in &chunk {
+                        match state.storage(contract_address, *key) {
+                            Ok(_) => fetched += 1,
+                            Err(e) => {
+                                tracing::warn!(
+                                    key = %format!("{key:#x}"),
+                                    error = %e,
+                                    "prefetch: slot fetch failed"
+                                );
+                                failed += 1;
+                            }
+                        }
+                    }
+                    Ok::<_, StarknetApiError>((fetched, failed))
+                })
+                .await
+            });
+        }
+
+        let mut fetched = 0u32;
+        let mut failed = 0u32;
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(Ok((f, fail)))) => {
+                    fetched += f;
+                    failed += fail;
+                }
+                Ok(Ok(Err(e))) => {
+                    tracing::warn!(error = %e, "prefetch: chunk state error");
+                    failed += CHUNK_SIZE as u32;
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "prefetch: chunk task error");
+                    failed += CHUNK_SIZE as u32;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "prefetch: chunk join error");
+                    failed += CHUNK_SIZE as u32;
+                }
+            }
+        }
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        tracing::info!(
+            %contract_address,
+            total,
+            fetched,
+            failed,
+            elapsed_ms,
+            "storage prefetch complete"
+        );
+
+        Ok(PrefetchResult { total, fetched, failed, elapsed_ms })
+    }
 }
 
 #[async_trait]
@@ -223,5 +306,13 @@ where
         to_block: BlockNumber,
     ) -> RpcResult<Vec<StorageDiffEntry>> {
         Ok(self.storage_diff(contract_address, from_block, to_block).await?)
+    }
+
+    async fn prefetch_storage(
+        &self,
+        contract_address: ContractAddress,
+        keys: Vec<StorageKey>,
+    ) -> RpcResult<PrefetchResult> {
+        Ok(self.prefetch_storage_slots(contract_address, keys).await?)
     }
 }
