@@ -987,14 +987,25 @@ where
 
         match (from, to) {
             (EventBlockId::Num(from), EventBlockId::Num(to)) => {
-                let from_after_forked_if_any = from;
+                // If forked and range includes pre-fork blocks, proxy to upstream
+                if let Some(fork_block) = self.storage().fork_block() {
+                    if from <= fork_block {
+                        return self.events_with_upstream_proxy(
+                            from,
+                            fork_block,
+                            Some(to),
+                            address,
+                            keys,
+                            continuation_token,
+                            chunk_size,
+                        );
+                    }
+                }
 
                 let cursor = continuation_token.and_then(|t| t.to_token().map(|t| t.into()));
-                let block_range = from_after_forked_if_any..=to;
-
                 let cursor = utils::events::fetch_events_at_blocks(
                     provider,
-                    block_range,
+                    from..=to,
                     &filter,
                     chunk_size,
                     cursor,
@@ -1002,21 +1013,31 @@ where
                 )?;
 
                 let continuation_token = cursor.map(|c| c.into_rpc_cursor().to_string());
-                let events_page = GetEventsResponse { events, continuation_token };
-
-                Ok(events_page)
+                Ok(GetEventsResponse { events, continuation_token })
             }
 
             (EventBlockId::Num(from), EventBlockId::Pending) => {
-                let from_after_forked_if_any = from;
+                // If forked and range includes pre-fork blocks, proxy to upstream
+                if let Some(fork_block) = self.storage().fork_block() {
+                    if from <= fork_block {
+                        return self.events_with_upstream_proxy(
+                            from,
+                            fork_block,
+                            None, // None = continue through to pending
+                            address,
+                            keys,
+                            continuation_token,
+                            chunk_size,
+                        );
+                    }
+                }
 
                 let cursor = continuation_token.and_then(|t| t.to_token().map(|t| t.into()));
                 let latest = provider.latest_number()?;
-                let block_range = from_after_forked_if_any..=latest;
 
                 let int_cursor = utils::events::fetch_events_at_blocks(
                     provider,
-                    block_range,
+                    from..=latest,
                     &filter,
                     chunk_size,
                     cursor.clone(),
@@ -1077,6 +1098,194 @@ where
             (EventBlockId::Pending, EventBlockId::Num(_)) => Err(StarknetApiError::unexpected(
                 "Invalid block range; `from` block must be lower than `to`",
             )),
+        }
+    }
+
+    /// Proxies pre-fork events to upstream and continues with local iteration for post-fork.
+    ///
+    /// When Katana runs in fork mode, iterating per-block through pre-fork receipts would
+    /// trigger O(N) lazy-fetch RPCs to the upstream. Instead, this method proxies the pre-fork
+    /// portion as a single bulk `starknet_getEvents` call to the upstream, then continues with
+    /// local iteration for any post-fork blocks.
+    ///
+    /// `to_block`: `Some(n)` = concrete block number, `None` = include up to pending.
+    fn events_with_upstream_proxy(
+        &self,
+        from: katana_primitives::block::BlockNumber,
+        fork_block: katana_primitives::block::BlockNumber,
+        to_block: Option<katana_primitives::block::BlockNumber>,
+        address: Option<ContractAddress>,
+        keys: Option<Vec<Vec<Felt>>>,
+        continuation_token: Option<MaybeForkedContinuationToken>,
+        chunk_size: u64,
+    ) -> StarknetApiResult<GetEventsResponse> {
+        use katana_rpc_types::event::EventFilter;
+
+        let mut events = Vec::with_capacity(chunk_size as usize);
+
+        // Determine phase from continuation token:
+        // - None or Forked(_) → still fetching from upstream
+        // - Token(_) → already past the fork boundary, local-only
+        let in_upstream_phase = match &continuation_token {
+            None | Some(MaybeForkedContinuationToken::Forked(_)) => true,
+            Some(MaybeForkedContinuationToken::Token(_)) => false,
+        };
+
+        if in_upstream_phase {
+            // Proxy to upstream for [from, min(to, fork_block)]
+            let upstream_to = match to_block {
+                Some(to) => std::cmp::min(to, fork_block),
+                None => fork_block,
+            };
+
+            let upstream_filter = EventFilter {
+                from_block: Some(BlockIdOrTag::Number(from)),
+                to_block: Some(BlockIdOrTag::Number(upstream_to)),
+                address,
+                keys: keys.clone(),
+            };
+
+            let upstream_token = match continuation_token {
+                Some(MaybeForkedContinuationToken::Forked(s)) => Some(s),
+                _ => None,
+            };
+
+            let response = self
+                .storage()
+                .upstream_events(upstream_filter, upstream_token, chunk_size)
+                .map_err(|e| {
+                    StarknetApiError::unexpected(format!("upstream event proxy failed: {e}"))
+                })?;
+
+            events = response.events;
+
+            if let Some(token) = response.continuation_token {
+                // Upstream has more events — return with FK_ prefix for next page
+                let forked_token = MaybeForkedContinuationToken::Forked(token);
+                return Ok(GetEventsResponse {
+                    events,
+                    continuation_token: Some(forked_token.to_string()),
+                });
+            }
+
+            // Upstream exhausted — continue with local post-fork events if range extends past fork
+            let has_post_fork = match to_block {
+                Some(to) => to > fork_block,
+                None => true,
+            };
+
+            if has_post_fork {
+                let remaining = chunk_size.saturating_sub(events.len() as u64);
+                if remaining > 0 {
+                    // Use a fresh buffer for local events because fetch_tx_events
+                    // computes remaining capacity as chunk_size - buffer.len().
+                    // If we passed `events` (already containing upstream results),
+                    // the capacity check would see buffer as "full".
+                    let mut local_buf = Vec::new();
+                    let local_result = self.fetch_local_post_fork(
+                        fork_block,
+                        to_block,
+                        address,
+                        keys,
+                        remaining,
+                        None,
+                        &mut local_buf,
+                    )?;
+                    events.extend(local_result.events);
+                    return Ok(GetEventsResponse {
+                        events,
+                        continuation_token: local_result.continuation_token,
+                    });
+                }
+            }
+
+            Ok(GetEventsResponse { events, continuation_token: None })
+        } else {
+            // Already past the fork boundary — local iteration only
+            let local_cursor = continuation_token.and_then(|t| t.to_token().map(|t| t.into()));
+            self.fetch_local_post_fork(
+                fork_block,
+                to_block,
+                address,
+                keys,
+                chunk_size,
+                local_cursor,
+                &mut events,
+            )
+        }
+    }
+
+    /// Fetches events from local blocks starting at fork_block+1.
+    fn fetch_local_post_fork(
+        &self,
+        fork_block: katana_primitives::block::BlockNumber,
+        to_block: Option<katana_primitives::block::BlockNumber>,
+        address: Option<ContractAddress>,
+        keys: Option<Vec<Vec<Felt>>>,
+        chunk_size: u64,
+        cursor: Option<Cursor>,
+        buffer: &mut Vec<katana_rpc_types::event::EmittedEvent>,
+    ) -> StarknetApiResult<GetEventsResponse> {
+        let provider = self.storage().provider();
+        let filter = utils::events::Filter { address, keys };
+        let local_from = fork_block + 1;
+
+        match to_block {
+            Some(to) => {
+                let cursor = utils::events::fetch_events_at_blocks(
+                    provider,
+                    local_from..=to,
+                    &filter,
+                    chunk_size,
+                    cursor,
+                    buffer,
+                )?;
+                let continuation_token = cursor.map(|c| c.into_rpc_cursor().to_string());
+                Ok(GetEventsResponse {
+                    events: std::mem::take(buffer),
+                    continuation_token,
+                })
+            }
+            None => {
+                let latest = provider.latest_number()?;
+                let int_cursor = utils::events::fetch_events_at_blocks(
+                    provider,
+                    local_from..=latest,
+                    &filter,
+                    chunk_size,
+                    cursor.clone(),
+                    buffer,
+                )?;
+
+                if let Some(c) = int_cursor {
+                    return Ok(GetEventsResponse {
+                        events: std::mem::take(buffer),
+                        continuation_token: Some(c.into_rpc_cursor().to_string()),
+                    });
+                }
+
+                if let Some(block) =
+                    self.inner.pending_block_provider.get_pending_block_with_receipts()?
+                {
+                    let new_cursor = utils::events::fetch_pending_events(
+                        &block,
+                        &filter,
+                        chunk_size,
+                        cursor,
+                        buffer,
+                    )?;
+                    Ok(GetEventsResponse {
+                        events: std::mem::take(buffer),
+                        continuation_token: Some(new_cursor.into_rpc_cursor().to_string()),
+                    })
+                } else {
+                    let new_cursor = Cursor::new_block(latest + 1);
+                    Ok(GetEventsResponse {
+                        events: std::mem::take(buffer),
+                        continuation_token: Some(new_cursor.into_rpc_cursor().to_string()),
+                    })
+                }
+            }
         }
     }
 
