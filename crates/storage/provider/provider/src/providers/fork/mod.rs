@@ -189,6 +189,23 @@ impl<Tx1: DbTx> ForkedProvider<Tx1> {
     pub fn forked_db(&self) -> &ForkedDb {
         &self.fork_db
     }
+
+    /// Fetch events from upstream for a pre-fork block range.
+    ///
+    /// Proxies `starknet_getEvents` directly to the fork backend instead of
+    /// iterating per-block with lazy-fetch. This is O(1) RPC calls vs O(N)
+    /// where N is the number of blocks in the range.
+    pub fn get_upstream_events(
+        &self,
+        filter: katana_rpc_types::event::EventFilter,
+        continuation_token: Option<String>,
+        chunk_size: u64,
+    ) -> ProviderResult<katana_rpc_types::event::GetEventsResponse> {
+        self.fork_db
+            .backend
+            .get_events(filter, continuation_token, chunk_size)
+            .map_err(|e| ProviderError::Other(e.to_string()))
+    }
 }
 
 impl<Tx1: DbTx> BlockNumberProvider for ForkedProvider<Tx1> {
